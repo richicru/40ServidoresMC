@@ -26,15 +26,21 @@ public class ApiClient {
     private final CSPlugin plugin;
     private final Gson gson;
     private final ExecutorService ioExecutor;
+    private final CircuitBreaker circuitBreaker;
 
     public ApiClient(CSPlugin plugin, Gson gson) {
-        this(plugin, gson, defaultIoExecutor());
+        this(plugin, gson, defaultIoExecutor(), CircuitBreaker.defaults());
     }
 
     public ApiClient(CSPlugin plugin, Gson gson, ExecutorService ioExecutor) {
+        this(plugin, gson, ioExecutor, CircuitBreaker.defaults());
+    }
+
+    public ApiClient(CSPlugin plugin, Gson gson, ExecutorService ioExecutor, CircuitBreaker circuitBreaker) {
         this.plugin = plugin;
         this.gson = gson;
         this.ioExecutor = ioExecutor;
+        this.circuitBreaker = circuitBreaker;
     }
 
     private static ExecutorService defaultIoExecutor() {
@@ -55,6 +61,10 @@ public class ApiClient {
 
     protected String getBaseUrl() {
         return API_URL;
+    }
+
+    public CircuitBreaker getCircuitBreaker() {
+        return circuitBreaker;
     }
 
     public CompletableFuture<VoteResponse> validateVote(String player) {
@@ -87,40 +97,55 @@ public class ApiClient {
      * @throws IOException Si falla al parsear o al conectarse a la API, o si el servidor responde con código != 2xx
      */
     private <T> T fetchData(String params, String method, Class<T> type) throws IOException {
+        if (!circuitBreaker.canExecute()) {
+            long retryMs = circuitBreaker.backoffRemainingMs();
+            throw new IOException("Circuit breaker open (backoff " + retryMs + " ms): aborting API call");
+        }
+
         URL url = new URL(getBaseUrl() + apiKey() + params);
         HttpURLConnection connection = (HttpURLConnection) url.openConnection();
         connection.setRequestMethod(method);
         connection.setConnectTimeout(CONNECT_TIMEOUT_MS);
         connection.setReadTimeout(timeOut());
         connection.setRequestProperty("Accept", "application/json");
-        connection.setRequestProperty("User-Agent", "40ServidoresMC-Plugin/3.0");
+        connection.setRequestProperty("User-Agent",
+                UserAgent.build(plugin.getPluginVersion(), plugin.getServerPlatform(), plugin.getServerVersion()));
 
-        int status = connection.getResponseCode();
-        InputStream stream = (status >= 200 && status < 300)
-                ? connection.getInputStream()
-                : connection.getErrorStream();
+        int status;
+        try {
+            status = connection.getResponseCode();
+            InputStream stream = (status >= 200 && status < 300)
+                    ? connection.getInputStream()
+                    : connection.getErrorStream();
 
-        if (stream == null) {
-            throw new IOException("API call failed: HTTP " + status + " (no response body)");
-        }
-        if (status < 200 || status >= 300) {
-            String body;
-            try (Reader r = new InputStreamReader(stream, StandardCharsets.UTF_8)) {
-                StringBuilder sb = new StringBuilder();
-                char[] buf = new char[256];
-                int n;
-                while ((n = r.read(buf)) > 0) sb.append(buf, 0, n);
-                body = sb.toString();
+            if (stream == null) {
+                circuitBreaker.recordFailure();
+                throw new IOException("API call failed: HTTP " + status + " (no response body)");
             }
-            throw new IOException("API call failed: HTTP " + status + " — " + body);
-        }
-
-        try (Reader reader = new InputStreamReader(stream, StandardCharsets.UTF_8)) {
-            T result = gson.fromJson(reader, type);
-            if (result == null) {
-                throw new IOException("API returned empty/null body for " + type.getSimpleName());
+            if (status < 200 || status >= 300) {
+                String body;
+                try (Reader r = new InputStreamReader(stream, StandardCharsets.UTF_8)) {
+                    StringBuilder sb = new StringBuilder();
+                    char[] buf = new char[256];
+                    int n;
+                    while ((n = r.read(buf)) > 0) sb.append(buf, 0, n);
+                    body = sb.toString();
+                }
+                circuitBreaker.recordFailure();
+                throw new IOException("API call failed: HTTP " + status + " — " + body);
             }
-            return result;
+
+            try (Reader reader = new InputStreamReader(stream, StandardCharsets.UTF_8)) {
+                T result = gson.fromJson(reader, type);
+                if (result == null) {
+                    circuitBreaker.recordFailure();
+                    throw new IOException("API returned empty/null body for " + type.getSimpleName());
+                }
+                circuitBreaker.recordSuccess();
+                return result;
+            }
+        } finally {
+            connection.disconnect();
         }
     }
 

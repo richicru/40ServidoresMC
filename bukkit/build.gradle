@@ -24,6 +24,7 @@ shadowJar {
 
     relocate 'org.bstats', 'com.cadiducho.cservidoresmc.lib.bstats'
     relocate 'ninja.leaping.configurate', 'com.cadiducho.cservidoresmc.lib.configurate'
+    relocate 'com.google.gson', 'com.cadiducho.cservidoresmc.lib.gson'
 }
 
 artifacts {

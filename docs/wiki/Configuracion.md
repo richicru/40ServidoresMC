@@ -18,6 +18,7 @@ readTimeOut: 5000
 cooldown: 60
 update-branch: dev
 log-ip: false
+stats-cmd-cache-seconds: 30
 tag: "&8[&b40ServidoresMC&8]"
 
 # Mensajes traducibles. Vacío por defecto.
@@ -39,7 +40,9 @@ configVer: 4
 | `readTimeOut` | int | `5000` | Timeout de lectura HTTP (ms). |
 | `cooldown` | int | `60` | Segundos entre validaciones de voto por jugador. |
 | `update-branch` | string | `"dev"` | Rama de GitHub para buscar actualizaciones. |
+| `update-repo` | string | `"richicru/40ServidoresMC"` | Repo de GitHub para buscar actualizaciones. |
 | `log-ip` | bool | `false` | Si true, registra `[VoteReward] player=X ip=Y` tras cada voto. |
+| `stats-cmd-cache-seconds` | int | `30` | TTL del cache para `/stats40` (segundos). `0` desactiva el cache. |
 | `tag` | string | `"&8[&b40ServidoresMC&8]"` | Prefijo en mensajes al jugador. |
 | `messages.*` | mapa | `{}` | Mensajes traducibles (ver [Mensajes](Mensajes.md)). |
 | `configVer` | int | `4` | Versión de la configuración (no modificar manualmente). |

@@ -30,6 +30,7 @@ public class BukkitPlugin extends JavaPlugin implements CSPlugin {
     @Getter private ApiClient apiClient;
     @Getter private Updater updater;
     @Getter private StatsCache statsCache;
+    @Getter private StatsCache statsCmdCache;
 
     private static BukkitPlugin instance;
 
@@ -47,6 +48,10 @@ public class BukkitPlugin extends JavaPlugin implements CSPlugin {
 
         apiClient = new ApiClient(instance, new Gson());
         statsCache = new StatsCache(instance);
+        int statsCmdTtl = csConfiguration.getInt("stats-cmd-cache-seconds", 30);
+        if (statsCmdTtl > 0) {
+            statsCmdCache = new StatsCache(instance, statsCmdTtl);
+        }
 
         /*
          * Comandos y eventos
@@ -149,4 +154,16 @@ public class BukkitPlugin extends JavaPlugin implements CSPlugin {
         return address.getAddress().getHostAddress();
     }
 
+    @Override
+    public String getServerPlatform() {
+        return "Bukkit";
+    }
+
+    @Override
+    public String getServerVersion() {
+        String version = getServer().getBukkitVersion();
+        if (version == null || version.isEmpty()) return "unknown";
+        int dash = version.indexOf('-');
+        return dash < 0 ? version : version.substring(0, dash);
+    }
 }

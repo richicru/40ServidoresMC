@@ -124,8 +124,11 @@ public final class TestSupport {
         @Override public ApiClient getApiClient() { return apiClient; }
         @Override public Updater getUpdater() { return updater; }
         @Override public StatsCache getStatsCache() { return statsCache; }
+        @Override public StatsCache getStatsCmdCache() { return null; }
         @Override public String getPluginVersion() { return "3.0"; }
         @Override public void dispatchCommand(String command) { dispatchedCommands.add(command); }
         @Override public void broadcastMessage(String message) { broadcasts.add(message); }
+        @Override public String getServerPlatform() { return "Test"; }
+        @Override public String getServerVersion() { return "test-1.0"; }
     }
 }

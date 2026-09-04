@@ -159,7 +159,8 @@ public class Updater {
                 connection.setRequestMethod("GET");
                 connection.setConnectTimeout(CONNECT_TIMEOUT_MS);
                 connection.setReadTimeout(CONNECT_TIMEOUT_MS);
-                connection.setRequestProperty("User-Agent", "40ServidoresMC-Plugin/3.0");
+                connection.setRequestProperty("User-Agent",
+                        UserAgent.build(plugin.getPluginVersion(), plugin.getServerPlatform(), plugin.getServerVersion()));
 
                 int status = connection.getResponseCode();
                 InputStream stream = (status >= 200 && status < 300)

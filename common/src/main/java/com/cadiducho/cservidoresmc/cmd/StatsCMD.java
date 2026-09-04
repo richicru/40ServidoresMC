@@ -1,6 +1,7 @@
 package com.cadiducho.cservidoresmc.cmd;
 
 import com.cadiducho.cservidoresmc.MessageKey;
+import com.cadiducho.cservidoresmc.StatsCache;
 import com.cadiducho.cservidoresmc.api.CSCommandSender;
 import com.cadiducho.cservidoresmc.api.CSPlugin;
 import com.cadiducho.cservidoresmc.model.ServerStats;
@@ -10,6 +11,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 
 /**
  * Comando para obtener las estadísticas de tu servidor en 40ServidoresMC
@@ -25,7 +27,9 @@ public class StatsCMD extends CSCommand {
 
     @Override
     public CommandResult execute(CSPlugin plugin, CSCommandSender sender, String label, List<String> args) {
-        plugin.getApiClient().fetchServerStats().thenAccept((ServerStats serverStats) -> {
+        CompletableFuture<ServerStats> future = fetchStats(plugin);
+
+        future.thenAccept((ServerStats serverStats) -> {
             if (serverStats.getServerName() == null) { //clave mal configurada
                 sender.sendMessageWithTag(MessageKey.STATS_INVALID_KEY.resolve(plugin.getCSConfiguration()));
                 return;
@@ -60,5 +64,18 @@ public class StatsCMD extends CSCommand {
             return null;
         });
         return CommandResult.SUCCESS;
+    }
+
+    /**
+     * Estrategia de fetch para /stats40: si el plugin expone una caché con TTL corto
+     * (separada de la usada por placeholders), se usa esa; si no, llamada directa.
+     * Permite que administradores puedan llamar /stats40 repetidamente sin saturar la API.
+     */
+    private CompletableFuture<ServerStats> fetchStats(CSPlugin plugin) {
+        StatsCache cache = plugin.getStatsCmdCache();
+        if (cache != null) {
+            return cache.get();
+        }
+        return plugin.getApiClient().fetchServerStats();
     }
 }

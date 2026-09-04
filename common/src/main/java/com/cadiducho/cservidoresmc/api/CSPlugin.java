@@ -97,4 +97,35 @@ public interface CSPlugin {
      * Usado por el sistema de placeholders para evitar llamadas API repetidas.
      */
     com.cadiducho.cservidoresmc.StatsCache getStatsCache();
+
+    /**
+     * Identificador corto de la plataforma, usado en el User-Agent HTTP.
+     * Por defecto devuelve "Unknown". Las implementaciones Bukkit/Sponge lo sobrescriben.
+     */
+    default String getServerPlatform() {
+        return "Unknown";
+    }
+
+    /**
+     * Versión del servidor (Bukkit API, Minecraft) usada en el User-Agent HTTP.
+     * Por defecto devuelve "unknown". Las implementaciones Bukkit/Sponge lo sobrescriben.
+     */
+    default String getServerVersion() {
+        return "unknown";
+    }
+
+    /**
+     * Caché de estadísticas para el comando /stats40, con TTL corto (por defecto 30 s).
+     *
+     * <p>Separada de {@link #getStatsCache()} (que sirve placeholders con TTL largo)
+     * porque {@code /stats40} puede ejecutarse varias veces por minuto sin necesidad
+     * de golpear la API cada vez.</p>
+     *
+     * <p>Por defecto devuelve {@code null}: el comando debe entonces llamar a la API
+     * directamente. Las implementaciones reales (Bukkit/Sponge) la inicializan perezosamente
+     * al arrancar leyendo {@code stats-cmd-cache-seconds} de la configuración.</p>
+     */
+    default com.cadiducho.cservidoresmc.StatsCache getStatsCmdCache() {
+        return null;
+    }
 }

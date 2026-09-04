@@ -195,6 +195,82 @@ class TestApiClient {
                 "La URL debe contener la clave de configuración, fue: " + capturedQuery);
     }
 
+    @Test
+    void userAgentHeaderIsSent() throws Exception {
+        final String[] captured = {null};
+        server.createContext("/test/ua", exchange -> {
+            captured[0] = exchange.getRequestHeaders().getFirst("User-Agent");
+            String body = "{\"web\":\"\",\"status\":\"1\"}";
+            byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, bytes.length);
+            exchange.getResponseBody().write(bytes);
+            exchange.close();
+        });
+        client.testUrl = "http://127.0.0.1:" + server.getAddress().getPort() + "/test/ua?clave=";
+
+        client.validateVote("x").get(2, TimeUnit.SECONDS);
+        assertNotNull(captured[0], "Debe enviarse la cabecera User-Agent");
+        assertTrue(captured[0].contains("40ServidoresMC"),
+                "El User-Agent debe contener 40ServidoresMC, fue: " + captured[0]);
+        // MockPlugin.getServerPlatform()="Test", getServerVersion()="test-1.0"
+        assertTrue(captured[0].contains("Test-test-1.0"),
+                "El User-Agent debe incluir plataforma y serverVersion (Test-test-1.0), fue: " + captured[0]);
+    }
+
+    @Test
+    void circuitBreakerOpensAfterRepeatedFailures() {
+        // Crear cliente con circuit breaker explícito: 2 fallos, backoff corto
+        CircuitBreaker cb = new CircuitBreaker(2, 5_000L, 10_000L);
+        TestableApiClient cbClient = new TestableApiClient(plugin, new Gson(), cb);
+
+        server.createContext("/cb/fail", exchange -> {
+            exchange.sendResponseHeaders(500, -1);
+            exchange.close();
+        });
+        cbClient.testUrl = "http://127.0.0.1:" + server.getAddress().getPort() + "/cb/fail?clave=";
+
+        // dos fallos deben abrir el circuito
+        for (int i = 0; i < 2; i++) {
+            assertThrows(java.util.concurrent.ExecutionException.class,
+                    () -> cbClient.validateVote("u").get(2, TimeUnit.SECONDS));
+        }
+        assertEquals(2, cb.getConsecutiveFailures());
+        assertTrue(cb.isOpen(), "Tras 2 fallos seguidos, el circuit breaker debe estar abierto");
+
+        // La siguiente llamada NO debe tocar el servidor: falla inmediato
+        assertThrows(java.util.concurrent.ExecutionException.class,
+                () -> cbClient.validateVote("u").get(2, TimeUnit.SECONDS));
+    }
+
+    @Test
+    void circuitBreakerClosesAfterSuccess() {
+        CircuitBreaker cb = new CircuitBreaker(2, 60_000L, 120_000L);
+        TestableApiClient cbClient = new TestableApiClient(plugin, new Gson(), cb);
+
+        server.createContext("/cb/ok", exchange -> {
+            String body = "{\"web\":\"\",\"status\":\"1\"}";
+            byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, bytes.length);
+            exchange.getResponseBody().write(bytes);
+            exchange.close();
+        });
+        cbClient.testUrl = "http://127.0.0.1:" + server.getAddress().getPort() + "/cb/ok?clave=";
+
+        cb.recordFailure();
+        cb.recordFailure();
+        assertTrue(cb.isOpen());
+        cb.recordSuccess();
+        assertFalse(cb.isOpen(), "Tras un éxito el circuito debe cerrarse");
+
+        // Una llamada real debe funcionar
+        try {
+            cbClient.validateVote("u").get(2, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            fail("Tras cerrar el circuito la llamada debe funcionar: " + e.getMessage());
+        }
+        assertEquals(0, cb.getConsecutiveFailures());
+    }
+
     /**
      * TestableApiClient expone un setter para sobreescribir la URL base en tiempo
      * de tests. La clase real (ApiClient) tiene la URL hardcodeada — esta envoltura
@@ -205,6 +281,10 @@ class TestApiClient {
 
         TestableApiClient(com.cadiducho.cservidoresmc.api.CSPlugin plugin, Gson gson) {
             super(plugin, gson);
+        }
+
+        TestableApiClient(com.cadiducho.cservidoresmc.api.CSPlugin plugin, Gson gson, CircuitBreaker cb) {
+            super(plugin, gson, java.util.concurrent.Executors.newSingleThreadExecutor(), cb);
         }
 
         @Override

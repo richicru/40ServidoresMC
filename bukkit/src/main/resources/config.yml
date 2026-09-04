@@ -11,6 +11,9 @@ cooldown: 60
 update-repo: richicru/40ServidoresMC
 update-branch: dev
 log-ip: false
+# TTL en segundos para la cache de /stats40 (separada de la de placeholders).
+# 0 o negativo desactiva la cache para /stats40 (siempre llama a la API).
+stats-cmd-cache-seconds: 30
 tag: "&8[&b40ServidoresMC&8]"
 
 # Mensajes traducibles. Cualquier clave omitida usará el valor por defecto en español.

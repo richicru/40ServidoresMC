@@ -20,6 +20,7 @@ shadowJar {
     archiveVersion.set(version)
 
     relocate 'org.bstats', 'com.cadiducho.cservidoresmc.lib.bstats'
+    relocate 'com.google.gson', 'com.cadiducho.cservidoresmc.lib.gson'
 }
 
 artifacts {

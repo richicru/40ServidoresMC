@@ -124,6 +124,61 @@ class TestStatsCMD {
         verify(plugin).logError(contains("network down"));
     }
 
+    @Test
+    void statsCmdCachePathIsUsedWhenAvailable() throws Exception {
+        StatsCache cache = mock(StatsCache.class);
+        when(plugin.getStatsCmdCache()).thenReturn(cache);
+
+        ServerStats stats = new ServerStats();
+        stats.setServerName("FromCache");
+        stats.setPosition(7);
+        stats.setLastVotes(Collections.emptyList());
+        when(cache.get()).thenReturn(CompletableFuture.completedFuture(stats));
+
+        MockCommandSender sender = MockCommandSender.console();
+        cmd.execute(plugin, sender, "stats40", Collections.emptyList());
+        Thread.sleep(100);
+
+        verify(cache, times(1)).get();
+        verify(apiClient, never()).fetchServerStats();
+        assertTrue(sender.sentMessages.stream().anyMatch(m -> m.contains("FromCache")),
+                "El nombre del server debe provenir del cache");
+    }
+
+    @Test
+    void nullStatsCmdCacheFallsBackToApi() throws Exception {
+        when(plugin.getStatsCmdCache()).thenReturn(null);
+
+        ServerStats stats = new ServerStats();
+        stats.setServerName("FromApi");
+        stats.setLastVotes(Collections.emptyList());
+        when(apiClient.fetchServerStats()).thenReturn(CompletableFuture.completedFuture(stats));
+
+        MockCommandSender sender = MockCommandSender.console();
+        cmd.execute(plugin, sender, "stats40", Collections.emptyList());
+        Thread.sleep(100);
+
+        verify(apiClient, times(1)).fetchServerStats();
+        assertTrue(sender.sentMessages.stream().anyMatch(m -> m.contains("FromApi")),
+                "El nombre del server debe provenir de la llamada directa a la API");
+    }
+
+    @Test
+    void statsCmdCacheExceptionIsHandledLikeDirectApiError() throws Exception {
+        StatsCache cache = mock(StatsCache.class);
+        when(plugin.getStatsCmdCache()).thenReturn(cache);
+
+        CompletableFuture<ServerStats> failed = new CompletableFuture<>();
+        failed.completeExceptionally(new RuntimeException("cache error"));
+        when(cache.get()).thenReturn(failed);
+
+        MockCommandSender sender = MockCommandSender.console();
+        cmd.execute(plugin, sender, "stats40", Collections.emptyList());
+        Thread.sleep(100);
+
+        assertTrue(sender.sentMessages.stream().anyMatch(m -> m.toLowerCase().contains("excepci")));
+    }
+
     private ServerVote makeVote(String name, boolean rewarded) {
         ServerVote vote = new ServerVote();
         try {

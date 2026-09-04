@@ -40,6 +40,25 @@
   - `%40servidoresmc_week_votes_rewarded%`
   - `%40servidoresmc_server_name%`
 
+### Tercera ronda (v3.0.1)
+
+- **Gson empaquetado y relocado.** Antes Gson era `compileOnly` en `common` y ni siquiera
+  estaba declarado en `bukkit`. En servidores sin Gson en su classpath el plugin daba
+  `NoClassDefFoundError`. Ahora es `api`, queda empaquetado en el shadowJar y se reloca a
+  `com.cadiducho.cservidoresmc.lib.gson` para evitar choques con Gson del servidor.
+- **Circuit breaker en ApiClient.** Nueva clase `CircuitBreaker` (en memoria) que
+  monitoriza fallos consecutivos de la API: tras 3 abre el circuito y rechaza llamadas
+  durante un backoff exponencial (5s → 10s → ... cap 5 min). Primer éxito resetea.
+  Evita martillear la API cuando está caída.
+- **User-Agent informativo.** Ambos `ApiClient` y `Updater` envían ahora
+  `40ServidoresMC/<ver>/<platform>-<serverVersion>/Java<major>-<vendor>`, sustituyendo
+  el `User-Agent: 40ServidoresMC-Plugin/3.0` estático. Permite al autor identificar
+  de un vistazo la plataforma y versión de un cliente que reporta un problema.
+- **Cache dedicado para `/stats40`.** Nuevo `stats-cmd-cache-seconds` (default **30 s**)
+  configurable y separado del cache de placeholders (5 min). Implementado con `getStatsCmdCache()`
+  en `CSPlugin`. Evita que un admin martillee la API ejecutando `/stats40` repetidamente.
+  Valor `0` desactiva el cache (vuelve al comportamiento anterior).
+
 ## 🔴 Robustez y bugs
 
 - ✅ Lista de votos vacía → corregido

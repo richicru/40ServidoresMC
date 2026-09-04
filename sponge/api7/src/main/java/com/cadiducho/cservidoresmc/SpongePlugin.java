@@ -31,7 +31,7 @@ import java.util.List;
 @Plugin(id = "cservidoresmc", name = "40ServidoresMC", version = SpongePlugin.PLUGIN_VERSION)
 public class SpongePlugin implements CSPlugin {
 
-    public static final String PLUGIN_VERSION = "3.0";
+    public static final String PLUGIN_VERSION = "3.0.1";
     @Inject private Logger logger;
     @Inject private Game game;
 
@@ -40,6 +40,7 @@ public class SpongePlugin implements CSPlugin {
     private ApiClient apiClient;
     private Updater updater;
     private StatsCache statsCache;
+    private StatsCache statsCmdCache;
     private CSConfiguration csConfiguration;
 
     @Inject
@@ -65,6 +66,10 @@ public class SpongePlugin implements CSPlugin {
     public void onServerStart(GameStartedServerEvent event) {
         apiClient = new ApiClient(this, new Gson());
         statsCache = new StatsCache(this);
+        int statsCmdTtl = csConfiguration.getInt("stats-cmd-cache-seconds", 30);
+        if (statsCmdTtl > 0) {
+            statsCmdCache = new StatsCache(this, statsCmdTtl);
+        }
         String repo = csConfiguration.getString("update-repo", Updater.DEFAULT_REPO);
         String branch = csConfiguration.getString("update-branch", Updater.DEFAULT_BRANCH);
         updater = Updater.forGitHub(this, getPluginVersion(), this.game.getPlatform().getMinecraftVersion().getName(),
@@ -132,6 +137,11 @@ public class SpongePlugin implements CSPlugin {
     }
 
     @Override
+    public StatsCache getStatsCmdCache() {
+        return statsCmdCache;
+    }
+
+    @Override
     public String getPluginVersion() {
         return PLUGIN_VERSION;
     }
@@ -153,5 +163,20 @@ public class SpongePlugin implements CSPlugin {
         java.net.InetSocketAddress address = player.getConnection().getAddress();
         if (address == null || address.getAddress() == null) return null;
         return address.getAddress().getHostAddress();
+    }
+
+    @Override
+    public String getServerPlatform() {
+        return "Sponge";
+    }
+
+    @Override
+    public String getServerVersion() {
+        try {
+            String v = game.getPlatform().getMinecraftVersion().getName();
+            return v != null && !v.isEmpty() ? v : "unknown";
+        } catch (Exception e) {
+            return "unknown";
+        }
     }
 }
