@@ -1,6 +1,6 @@
 # Propuestas de mejora — 40ServidoresMC Plugin
 
-> Análisis derivado del código fuente en la rama `development` (v3.0). Ordenado por impacto.
+> Análisis derivado del código fuente en la rama `dev` (v3.0). Ordenado por impacto.
 > Documento complementario a [SPEC.md](SPEC.md).
 
 ## ✅ Mejoras aplicadas (esta rama)
@@ -23,7 +23,7 @@
 - **Erratas.** `VoteStatus.INVALID_kEY` → `INVALID_KEY`; "àra validar" → "para validar".
 - **Cooldown configurable.** Nueva clave `cooldown: 60` en config. Sustituye al valor
   hardcodeado en `VoteCMD`.
-- **Branch del Updater configurable.** Nueva clave `update-branch: development`. El plugin
+- **Branch del Updater configurable.** Nueva clave `update-branch: dev`. El plugin
   construye la URL desde `https://raw.githubusercontent.com/{repo}/{branch}/etc/v3.json`.
 - **Mensajes traducibles.** Nuevo enum `MessageKey` con 19 mensajes y método
   `resolve(config, placeholders...)`. Todos los strings hardcodeados de comandos y updater
@@ -113,7 +113,7 @@
 - **Erratas:** el enum `INVALID_kEY` (k minúscula) en
   [VoteStatus.java:9](../common/src/main/java/com/cadiducho/cservidoresmc/model/VoteStatus.java#L9),
   y `"àra validar"` en VoteCMD.
-- **Branch del Updater fijo a `development`**
+- **Branch del Updater fijo a `dev`**
   ([Updater.java:85](../common/src/main/java/com/cadiducho/cservidoresmc/Updater.java#L85), ya
   marcado con TODO).
 - **Tests mínimos:** solo existe `TestUpdater`. Faltan tests de `ApiClient` (mockeando HTTP), de

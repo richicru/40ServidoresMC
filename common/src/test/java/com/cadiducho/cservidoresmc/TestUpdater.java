@@ -49,20 +49,20 @@ public class TestUpdater {
     }
 
     @Test
-    void defaultBranchIsDevelopment() {
-        assertEquals("development", Updater.DEFAULT_BRANCH);
+    void defaultBranchIsDev() {
+        assertEquals("dev", Updater.DEFAULT_BRANCH);
     }
 
     @Test
     void forGitHubBuildsCorrectUrl() throws Exception {
         Updater updater = Updater.forGitHub(null, "3.0", "1.20.4",
-                "richicru/40ServidoresMC", "development");
+                "richicru/40ServidoresMC", "dev");
 
         Field urlField = Updater.class.getDeclaredField("updateUrl");
         urlField.setAccessible(true);
         String url = (String) urlField.get(updater);
 
-        assertEquals("https://raw.githubusercontent.com/richicru/40ServidoresMC/development/etc/v3.json", url);
+        assertEquals("https://raw.githubusercontent.com/richicru/40ServidoresMC/dev/etc/v3.json", url);
     }
 
     @Test

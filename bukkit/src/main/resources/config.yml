@@ -9,7 +9,7 @@ comandosCustom:
 readTimeOut: 5000
 cooldown: 60
 update-repo: richicru/40ServidoresMC
-update-branch: development
+update-branch: dev
 log-ip: false
 tag: "&8[&b40ServidoresMC&8]"
 

@@ -16,7 +16,7 @@ comandosCustom:
 - money add {0} 10
 readTimeOut: 5000
 cooldown: 60
-update-branch: development
+update-branch: dev
 log-ip: false
 tag: "&8[&b40ServidoresMC&8]"
 
@@ -38,7 +38,7 @@ configVer: 4
 | `comandosCustom` | lista | `["money add {0} 10"]` | Comandos a ejecutar como recompensa. `{0}` = jugador. |
 | `readTimeOut` | int | `5000` | Timeout de lectura HTTP (ms). |
 | `cooldown` | int | `60` | Segundos entre validaciones de voto por jugador. |
-| `update-branch` | string | `"development"` | Rama de GitHub para buscar actualizaciones. |
+| `update-branch` | string | `"dev"` | Rama de GitHub para buscar actualizaciones. |
 | `log-ip` | bool | `false` | Si true, registra `[VoteReward] player=X ip=Y` tras cada voto. |
 | `tag` | string | `"&8[&b40ServidoresMC&8]"` | Prefijo en mensajes al jugador. |
 | `messages.*` | mapa | `{}` | Mensajes traducibles (ver [Mensajes](Mensajes.md)). |

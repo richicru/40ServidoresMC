@@ -1,6 +1,6 @@
 # Especificación técnica — 40ServidoresMC Plugin
 
-> Documento de especificación generado a partir del código fuente en la rama `development` (v3.0).
+> Documento de especificación generado a partir del código fuente en la rama `dev` (v3.0).
 
 ## 1. Resumen
 
@@ -162,9 +162,9 @@ Comandos registrados:
 - **[`Cooldown`](../common/src/main/java/com/cadiducho/cservidoresmc/Cooldown.java)** — cooldown
   por nombre de jugador con expiración temporal (mapa en memoria).
 - **[`Updater`](../common/src/main/java/com/cadiducho/cservidoresmc/Updater.java)** — descarga
-  `etc/v3.json` desde GitHub (`raw.githubusercontent.com/.../development/etc/v3.json`),
+  `etc/v3.json` desde GitHub (`raw.githubusercontent.com/.../dev/etc/v3.json`),
   compara la versión recomendada para la versión de Minecraft instalada y avisa si hay una
-  más reciente. *(Pendiente: el branch está fijado a `development`.)*
+  más reciente. *(Pendiente: el branch está fijado a `dev`.)*
 
 ## 5. Implementaciones por plataforma
 
@@ -204,7 +204,7 @@ Claves de configuración (ver [config.yml](../bukkit/src/main/resources/config.y
 | `tag` | string | Prefijo/tag del plugin en los mensajes. |
 | `readTimeOut` | int | Timeout de lectura HTTP (ms). |
 | `cooldown` | int | Segundos entre validaciones de voto por jugador. Default: `60`. |
-| `update-branch` | string | Rama de GitHub a comprobar para actualizaciones. Default: `development`. |
+| `update-branch` | string | Rama de GitHub a comprobar para actualizaciones. Default: `dev`. |
 | `log-ip` | bool | Si está activo, registra en consola `[VoteReward] player=X ip=Y` tras cada voto válido. Default: `false` (privacidad). |
 | `messages.*` | mapa | Mensajes traducibles. Ver [§6.1](#61-mensajes-traducibles). |
 | `configVer` | int | Versión de la configuración (actual: `4`). |
@@ -296,13 +296,13 @@ Los tests unitarios viven en `common/src/test/java/com/cadiducho/cservidoresmc/`
 |---------|-----|
 | `https://40servidoresmc.es/api2.php` | API de votos y estadísticas. |
 | `https://40servidoresmc.es/miservidor.php` | Panel del servidor (obtener la clave). |
-| `raw.githubusercontent.com/Cadiducho/40ServidoresMC/development/etc/v3.json` | Datos de versiones para el Updater. |
+| `raw.githubusercontent.com/richicru/40ServidoresMC/dev/etc/v3.json` | Datos de versiones para el Updater. |
 | `https://github.com/Cadiducho/40ServidoresMC/releases` | Descargas/changelog de releases. |
 | bStats (id `3909`) | Métricas de uso. |
 
 ## 10. Trabajo pendiente / conocido (TODOs en el código)
 
 - Tab-complete de comandos (`CSCommand.tabCompleteCommand` es un stub).
-- Branch del Updater fijado a `development` (ver TODO en `Updater.fetchUpdate`).
+- Branch del Updater fijado a `dev` (ver TODO en `Updater.fetchUpdate`).
 - PlaceholderAPI: hook registrado pero sin placeholders implementados.
 - Soporte de Sponge API 8 y BungeeCord previsto (módulos comentados en `settings.gradle`).

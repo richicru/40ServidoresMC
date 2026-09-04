@@ -42,13 +42,13 @@ public class Updater {
     private final String NEW_VERSION = "Versión desactualizada. Nueva versión: %s. Changelog: %s. Descarga en: %s";
 
     public static final String DEFAULT_REPO = "richicru/40ServidoresMC";
-    public static final String DEFAULT_BRANCH = "development";
+    public static final String DEFAULT_BRANCH = "dev";
     public static final String DEFAULT_UPDATE_PATH = "etc/v3.json";
 
     private final String repo;
 
     /**
-     * Crea un updater con los defaults (richicru/40ServidoresMC @ development).
+     * Crea un updater con los defaults (richicru/40ServidoresMC @ dev).
      */
     public Updater(CSPlugin instance, String vInstalada, String vMinecraft) {
         this(instance, vInstalada, vMinecraft,

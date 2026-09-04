@@ -27,7 +27,7 @@ pero seguirá funcionando.
 | Clave nueva | Default | Acción |
 |---|---|---|
 | `cooldown` | `60` | Añadir si quieres tunear el cooldown (antes era hardcoded). |
-| `update-branch` | `development` | Añadir solo si quieres comprobar otra rama. |
+| `update-branch` | `dev` | Añadir solo si quieres comprobar otra rama. |
 | `log-ip` | `false` | Añadir `true` si quieres registrar IP en votos. |
 | `messages` | `{}` | Añadir si quieres traducir mensajes. |
 
@@ -48,7 +48,7 @@ Sin cambios. Los placeholders `{0}` siguen funcionando igual.
 5. **Edita** `plugins/40ServidoresMC/config.yml` y:
    - Verifica que `clave` sigue siendo tu clave válida.
    - Añade `cooldown: 60` si quieres configurar el cooldown (opcional).
-   - Añade `update-branch: development` si lo necesitas (opcional).
+   - Añade `update-branch: dev` si lo necesitas (opcional).
    - Añade `log-ip: false` (recomendado dejarlo en `false` por privacidad).
    - Actualiza `configVer: 4` (el plugin lo sugiere pero no falla si no lo haces).
 

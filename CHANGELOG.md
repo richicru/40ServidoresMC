@@ -15,7 +15,7 @@ continuando el trabajo de Cadiducho. Reconocimiento al autor original.
 - Sistema de **mensajes traducibles** (`MessageKey`) con 19 mensajes y soporte para
   placeholders. Override vía `messages.*` en `config.yml`.
 - **Cooldown configurable** en segundos (`cooldown: 60`).
-- **Branch del Updater configurable** (`update-branch: development`). La URL del JSON
+- **Branch del Updater configurable** (`update-branch: dev`). La URL del JSON
   de versiones se construye desde `repo + branch`.
 - **Log opcional de IP** tras voto válido (`log-ip: false`, opt-in por privacidad).
   Nuevo método `CSPlugin.getPlayerIp(name)`.
