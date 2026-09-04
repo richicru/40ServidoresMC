@@ -7,5 +7,16 @@ mensaje: '&6Gracias por votarnos! Aqui tienes tu premio: '
 comandosCustom: 
 - money add {0} 10
 readTimeOut: 5000
+cooldown: 60
+update-branch: development
+log-ip: false
 tag: "&8[&b40ServidoresMC&8]"
-configVer: 3
+
+# Mensajes traducibles. Cualquier clave omitida usará el valor por defecto en español.
+# Para traducir, sobrescribe solo las claves que necesites:
+# messages:
+#   vote-already-rewarded: "&aThanks for voting, but you already got your reward!"
+#   cmd-no-permission: "&cYou don't have permission to use this command"
+messages: {}
+
+configVer: 4

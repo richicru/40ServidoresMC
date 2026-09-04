@@ -1,5 +1,6 @@
 package com.cadiducho.cservidoresmc.cmd;
 
+import com.cadiducho.cservidoresmc.MessageKey;
 import com.cadiducho.cservidoresmc.api.CSCommandSender;
 import com.cadiducho.cservidoresmc.api.CSPlugin;
 
@@ -24,7 +25,7 @@ public class TestCMD extends CSCommand {
             return CommandResult.ONLY_PLAYER;
         }
 
-        sender.sendMessageWithTag("&bPlataforma de test para 40ServidoresMC:");
+        sender.sendMessageWithTag(MessageKey.TEST_HEADER.resolve(plugin.getCSConfiguration()));
         sender.sendMessage("");
         sender.sendMessageWithTag(plugin.getCSConfiguration().getString("mensaje"));
         for (String cmds : plugin.getCSConfiguration().customCommandsList()) {

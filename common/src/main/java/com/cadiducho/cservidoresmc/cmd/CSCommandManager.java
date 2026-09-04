@@ -1,5 +1,6 @@
 package com.cadiducho.cservidoresmc.cmd;
 
+import com.cadiducho.cservidoresmc.MessageKey;
 import com.cadiducho.cservidoresmc.api.CSCommandSender;
 import com.cadiducho.cservidoresmc.api.CSPlugin;
 import lombok.Getter;
@@ -49,22 +50,22 @@ public class CSCommandManager {
         if (command.isPresent()) {
             CSCommand cmd = command.get();
             if (!cmd.isAuthorized(sender)) {
-                sender.sendMessageWithTag("&cNo tienes permiso para usar este comando");
+                sender.sendMessageWithTag(MessageKey.CMD_NO_PERMISSION.resolve(plugin.getCSConfiguration()));
                 return;
             }
             CSCommand.CommandResult result = cmd.execute(plugin, sender, label, args);
             switch (result) {
                 case COOLDOWN:
-                    sender.sendMessageWithTag("&6No puedes ejecutar este comando tantas veces seguidas!");
+                    sender.sendMessageWithTag(MessageKey.CMD_COOLDOWN.resolve(plugin.getCSConfiguration()));
                     break;
                 case NO_PERMISSION:
-                    sender.sendMessageWithTag("&cNo tienes permiso para usar este comando");
+                    sender.sendMessageWithTag(MessageKey.CMD_NO_PERMISSION.resolve(plugin.getCSConfiguration()));
                     break;
                 case ERROR:
-                    sender.sendMessageWithTag("&cHa ocurrido un error inesperado");
+                    sender.sendMessageWithTag(MessageKey.CMD_ERROR.resolve(plugin.getCSConfiguration()));
                     break;
                 case ONLY_PLAYER:
-                    sender.sendMessageWithTag("&cEste comando sólo puede ser ejecutado por usuarios");
+                    sender.sendMessageWithTag(MessageKey.CMD_ONLY_PLAYER.resolve(plugin.getCSConfiguration()));
                     break;
             }
         }

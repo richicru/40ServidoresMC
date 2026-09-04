@@ -1,6 +1,7 @@
 package com.cadiducho.cservidoresmc.cmd;
 
 import com.cadiducho.cservidoresmc.Cooldown;
+import com.cadiducho.cservidoresmc.MessageKey;
 import com.cadiducho.cservidoresmc.api.CSCommandSender;
 import com.cadiducho.cservidoresmc.api.CSPlugin;
 import com.cadiducho.cservidoresmc.model.VoteResponse;
@@ -17,10 +18,18 @@ public class VoteCMD extends CSCommand {
     protected VoteCMD() {
         super("voto40", "40servidores.voto", Arrays.asList("votar40", "vote40", "mivoto40"),
                 "Valida tu voto en el servidor",
-                "Usa /voto40 àra validar tu voto en el servidor");
+                "Usa /voto40 para validar tu voto en el servidor");
     }
 
-    final Cooldown cooldown = new Cooldown(60);
+    private Cooldown cooldown;
+
+    private Cooldown cooldown(CSPlugin plugin) {
+        if (cooldown == null) {
+            int seconds = plugin.getCSConfiguration().getInt("cooldown", 60);
+            cooldown = new Cooldown(seconds);
+        }
+        return cooldown;
+    }
 
     @Override
     public CommandResult execute(CSPlugin plugin, CSCommandSender sender, String label, List<String> args) {
@@ -28,20 +37,22 @@ public class VoteCMD extends CSCommand {
             return CommandResult.ONLY_PLAYER;
         }
 
-        if (cooldown.isCoolingDown(sender.getName())) {
+        Cooldown cd = cooldown(plugin);
+        if (cd.isCoolingDown(sender.getName())) {
             return CommandResult.COOLDOWN;
         }
 
-        cooldown.setOnCooldown(sender.getName());
+        cd.setOnCooldown(sender.getName());
 
-        sender.sendMessageWithTag("&7Obteniendo voto...");
+        sender.sendMessageWithTag(MessageKey.VOTE_FETCHING.resolve(plugin.getCSConfiguration()));
         plugin.getApiClient().validateVote(sender.getName()).thenAccept((VoteResponse voteResponse) -> {
             String web = voteResponse.getWeb();
             VoteStatus status = voteResponse.getStatus();
 
             switch (status) {
                 case NOT_VOTED:
-                    sender.sendNotVotedTodayLink("&6No has votado hoy! Puedes hacerlo en &a ", web);
+                    sender.sendNotVotedTodayLink(
+                            MessageKey.VOTE_NOT_VOTED_PREFIX.resolve(plugin.getCSConfiguration()), web);
                     break;
                 case SUCCESS:
                     sender.sendMessageWithTag(plugin.getCSConfiguration().getString("mensaje"));
@@ -53,19 +64,25 @@ public class VoteCMD extends CSCommand {
                     if (plugin.getCSConfiguration().getBoolean("broadcast.activado")) {
                         plugin.broadcastMessage(plugin.getCSConfiguration().getString("broadcast.mensajeBroadcast").replace("{0}", sender.getName()));
                     }
+
+                    if (plugin.getCSConfiguration().getBoolean("log-ip", false)) {
+                        String ip = plugin.getPlayerIp(sender.getName());
+                        plugin.log(String.format("[VoteReward] player=%s ip=%s",
+                                sender.getName(), ip != null ? ip : "unknown"));
+                    }
                     break;
                 case ALREADY_VOTED:
-                    sender.sendMessageWithTag("&aGracias por votar, pero ya has obtenido tu premio!");
+                    sender.sendMessageWithTag(MessageKey.VOTE_ALREADY_REWARDED.resolve(plugin.getCSConfiguration()));
                     break;
-                case INVALID_kEY:
-                    sender.sendMessageWithTag("&cClave incorrecta. Entra en &bhttps://40servidoresmc.es/miservidor.php &cy cambia esta.");
+                case INVALID_KEY:
+                    sender.sendMessageWithTag(MessageKey.VOTE_INVALID_KEY.resolve(plugin.getCSConfiguration()));
                     break;
                 default:
-                    sender.sendMessageWithTag("&7Ha ocurrido un error. Prueba más tarde o avisa a un adminsitrador");
+                    sender.sendMessageWithTag(MessageKey.VOTE_ERROR.resolve(plugin.getCSConfiguration()));
                     break;
             }
         }).exceptionally(e -> {
-            sender.sendMessageWithTag("&cHa ocurrido una excepción. Avisa a un administrador");
+            sender.sendMessageWithTag(MessageKey.VOTE_EXCEPTION.resolve(plugin.getCSConfiguration()));
             plugin.logError("Excepción intentando votar: " + e.getMessage());
             return null;
         });

@@ -1,8 +1,10 @@
 package com.cadiducho.cservidoresmc.bukkit;
 
 import com.cadiducho.cservidoresmc.ApiClient;
+import com.cadiducho.cservidoresmc.StatsCache;
 import com.cadiducho.cservidoresmc.Updater;
 import com.cadiducho.cservidoresmc.api.CSCommandSender;
+import com.cadiducho.cservidoresmc.api.CSConfiguration;
 import com.cadiducho.cservidoresmc.api.CSConsoleSender;
 import com.cadiducho.cservidoresmc.api.CSPlugin;
 import com.cadiducho.cservidoresmc.cmd.CSCommandManager;
@@ -28,7 +30,8 @@ public class BukkitPlugin extends JavaPlugin implements CSPlugin {
 
     @Getter private ApiClient apiClient;
     @Getter private Updater updater;
-    
+    @Getter private StatsCache statsCache;
+
     private static BukkitPlugin instance;
 
     private CSConfiguration csConfiguration;
@@ -44,6 +47,7 @@ public class BukkitPlugin extends JavaPlugin implements CSPlugin {
         csConfiguration = new BukkitConfigurationAdapter(instance, new File(getDataFolder() + File.separator + "config.yml"));
 
         apiClient = new ApiClient(instance, new Gson());
+        statsCache = new StatsCache(instance);
 
         /*
          * Comandos y eventos
@@ -58,8 +62,10 @@ public class BukkitPlugin extends JavaPlugin implements CSPlugin {
         /*
          * Finalizar...
          */
-        updater = new Updater(instance, getPluginVersion(), getServer().getBukkitVersion().split("-")[0]);
-        debugLog("Checkeando nuevas versiones...");
+        String branch = csConfiguration.getString("update-branch", Updater.DEFAULT_BRANCH);
+        updater = new Updater(instance, getPluginVersion(), getServer().getBukkitVersion().split("-")[0],
+                Updater.DEFAULT_REPO, branch);
+        debugLog("Checkeando nuevas versiones (branch=" + branch + ")...");
         updater.checkearVersion(null);
         log("Plugin 40ServidoresMC v" + getPluginVersion() + " cargado completamente");
 
@@ -132,6 +138,15 @@ public class BukkitPlugin extends JavaPlugin implements CSPlugin {
         getServer().getScheduler().runTask(instance, () -> {
             getServer().getOnlinePlayers().forEach(p -> p.sendMessage(ChatColor.translateAlternateColorCodes('&', message)));
         });
+    }
+
+    @Override
+    public String getPlayerIp(String playerName) {
+        org.bukkit.entity.Player player = getServer().getPlayerExact(playerName);
+        if (player == null) return null;
+        java.net.InetSocketAddress address = player.getAddress();
+        if (address == null || address.getAddress() == null) return null;
+        return address.getAddress().getHostAddress();
     }
 
 }

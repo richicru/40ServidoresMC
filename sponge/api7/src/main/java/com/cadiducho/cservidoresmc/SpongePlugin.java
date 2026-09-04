@@ -39,6 +39,7 @@ public class SpongePlugin implements CSPlugin {
 
     private ApiClient apiClient;
     private Updater updater;
+    private StatsCache statsCache;
     private CSConfiguration csConfiguration;
 
     @Inject
@@ -63,7 +64,10 @@ public class SpongePlugin implements CSPlugin {
     @Listener
     public void onServerStart(GameStartedServerEvent event) {
         apiClient = new ApiClient(this, new Gson());
-        updater = new Updater(this, getPluginVersion(), this.game.getPlatform().getMinecraftVersion().getName());
+        statsCache = new StatsCache(this);
+        String branch = csConfiguration.getString("update-branch", Updater.DEFAULT_BRANCH);
+        updater = new Updater(this, getPluginVersion(), this.game.getPlatform().getMinecraftVersion().getName(),
+                Updater.DEFAULT_REPO, branch);
         updater.checkearVersion(new CSConsoleSender(this));
 
         checkDefaultKey();
@@ -122,6 +126,11 @@ public class SpongePlugin implements CSPlugin {
     }
 
     @Override
+    public StatsCache getStatsCache() {
+        return statsCache;
+    }
+
+    @Override
     public String getPluginVersion() {
         return PLUGIN_VERSION;
     }
@@ -134,5 +143,14 @@ public class SpongePlugin implements CSPlugin {
     @Override
     public void broadcastMessage(String message) {
         Sponge.getServer().getBroadcastChannel().send(TextSerializers.FORMATTING_CODE.deserialize(message));
+    }
+
+    @Override
+    public String getPlayerIp(String playerName) {
+        org.spongepowered.api.entity.living.player.Player player = Sponge.getServer().getPlayer(playerName).orElse(null);
+        if (player == null) return null;
+        java.net.InetSocketAddress address = player.getConnection().getAddress().getAddress();
+        if (address == null) return null;
+        return address.getHostAddress();
     }
 }

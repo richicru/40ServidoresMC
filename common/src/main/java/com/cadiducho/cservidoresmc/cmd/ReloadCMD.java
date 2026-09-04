@@ -1,5 +1,6 @@
 package com.cadiducho.cservidoresmc.cmd;
 
+import com.cadiducho.cservidoresmc.MessageKey;
 import com.cadiducho.cservidoresmc.api.CSCommandSender;
 import com.cadiducho.cservidoresmc.api.CSPlugin;
 
@@ -23,8 +24,8 @@ public class ReloadCMD extends CSCommand {
     public CommandResult execute(CSPlugin plugin, CSCommandSender sender, String label, List<String> args) {
         plugin.getCSConfiguration().reload();
 
-        sender.sendMessageWithTag("&aConfiguración recargada correctamente");
-        sender.sendMessageWithTag("&aFuncionando la versión " + plugin.getPluginVersion());
+        sender.sendMessageWithTag(MessageKey.RELOAD_SUCCESS.resolve(plugin.getCSConfiguration()));
+        sender.sendMessageWithTag(MessageKey.RELOAD_VERSION.resolve(plugin.getCSConfiguration(), "version", plugin.getPluginVersion()));
 
         plugin.log("Configuracion recargada");
         return CommandResult.SUCCESS;

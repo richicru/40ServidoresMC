@@ -35,7 +35,7 @@ public interface CSPlugin {
      * @return la versión de la configuración
      */
     default int configVersion() {
-        return 3;
+        return 4;
     }
 
     /**
@@ -82,4 +82,19 @@ public interface CSPlugin {
      * @param message el mensaje
      */
     void broadcastMessage(String message);
+
+    /**
+     * Obtener la IP del jugador por nombre. Devuelve null si está offline o no se puede determinar.
+     * @param playerName Nombre del jugador
+     * @return IP del jugador, o null si no está conectado
+     */
+    default String getPlayerIp(String playerName) {
+        return null;
+    }
+
+    /**
+     * Obtener (o inicializar perezosamente) la caché de estadísticas del servidor.
+     * Usado por el sistema de placeholders para evitar llamadas API repetidas.
+     */
+    com.cadiducho.cservidoresmc.StatsCache getStatsCache();
 }
