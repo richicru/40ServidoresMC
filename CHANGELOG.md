@@ -5,6 +5,24 @@ Todos los cambios relevantes del plugin se documentan en este archivo.
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/),
 y este proyecto se adhiere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.3] - 2026-09-04
+
+### Corregido
+- **El plugin no creaba la carpeta `plugins/40ServidoresMC/` ni el `config.yml` en
+  instalación limpia** (regresión que afectaba a todos los servidores Bukkit/Spigot/Paper/Folia).
+  - Causa: `BukkitConfigurationAdapter.reload()` llamaba a
+    `YamlConfiguration.loadConfiguration(file)` y, si el archivo no existía, devolvía
+    una configuración vacía en silencio. Nunca se llamaba a `saveDefaultConfig()`,
+    así que ni la carpeta ni el `config.yml` se generaban.
+  - Consecuencia visible: el plugin funcionaba con los defaults hardcodeados, pero
+    el usuario no podía editar `config.yml` y veía el warning "`Tu configuración
+    es de una versión más antigua...`" en cada arranque.
+  - Fix: `BukkitPlugin.onEnable()` ahora llama `saveDefaultConfig()` antes de
+    instanciar el adapter. Si el JAR no contiene `config.yml`, queda creado
+    en disco y la carpeta aparece.
+  - El módulo `sponge/api7` ya lo hacía correctamente (`SpongePlugin.resolveConfig`),
+    por lo que no requiere cambios.
+
 ## [3.0.2] - 2026-09-04
 
 ### Añadido

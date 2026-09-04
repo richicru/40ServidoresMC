@@ -59,6 +59,11 @@ public class BukkitPlugin extends JavaPlugin implements CSPlugin {
             getLogger().info("Folia detectado: usando schedulers region-aware.");
         }
 
+        // saveDefaultConfig() crea el directorio del plugin si no existe y copia
+        // config.yml desde los resources del JAR si el usuario aún no lo tiene.
+        // Sin esto, los nuevos installs se quedan sin carpeta y sin config (issue v3.0.2).
+        saveDefaultConfig();
+
         csConfiguration = new BukkitConfigurationAdapter(instance, new File(getDataFolder() + File.separator + "config.yml"));
 
         apiClient = new ApiClient(instance, new Gson());
