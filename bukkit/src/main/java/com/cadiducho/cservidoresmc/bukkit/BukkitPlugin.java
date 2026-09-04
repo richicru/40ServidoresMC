@@ -4,7 +4,6 @@ import com.cadiducho.cservidoresmc.ApiClient;
 import com.cadiducho.cservidoresmc.StatsCache;
 import com.cadiducho.cservidoresmc.Updater;
 import com.cadiducho.cservidoresmc.api.CSCommandSender;
-import com.cadiducho.cservidoresmc.api.CSConfiguration;
 import com.cadiducho.cservidoresmc.api.CSConsoleSender;
 import com.cadiducho.cservidoresmc.api.CSPlugin;
 import com.cadiducho.cservidoresmc.cmd.CSCommandManager;
@@ -62,10 +61,11 @@ public class BukkitPlugin extends JavaPlugin implements CSPlugin {
         /*
          * Finalizar...
          */
+        String repo = csConfiguration.getString("update-repo", Updater.DEFAULT_REPO);
         String branch = csConfiguration.getString("update-branch", Updater.DEFAULT_BRANCH);
-        updater = new Updater(instance, getPluginVersion(), getServer().getBukkitVersion().split("-")[0],
-                Updater.DEFAULT_REPO, branch);
-        debugLog("Checkeando nuevas versiones (branch=" + branch + ")...");
+        updater = Updater.forGitHub(instance, getPluginVersion(), getServer().getBukkitVersion().split("-")[0],
+                repo, branch);
+        debugLog("Checkeando nuevas versiones (" + repo + "@" + branch + ")...");
         updater.checkearVersion(null);
         log("Plugin 40ServidoresMC v" + getPluginVersion() + " cargado completamente");
 

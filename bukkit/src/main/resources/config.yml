@@ -4,10 +4,11 @@ broadcast:
     activado: true
     mensajeBroadcast: '&aGracias a {0} por votarnos! El ya ha obtenido su premio, usa &2/voto40&a y obten el tuyo'
 mensaje: '&6Gracias por votarnos! Aqui tienes tu premio: '
-comandosCustom: 
+comandosCustom:
 - money add {0} 10
 readTimeOut: 5000
 cooldown: 60
+update-repo: richicru/40ServidoresMC
 update-branch: development
 log-ip: false
 tag: "&8[&b40ServidoresMC&8]"

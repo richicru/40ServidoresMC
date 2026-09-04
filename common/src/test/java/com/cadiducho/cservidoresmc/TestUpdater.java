@@ -4,6 +4,7 @@ import com.cadiducho.cservidoresmc.model.updater.UpdaterInfo;
 import com.google.gson.Gson;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.Field;
 import java.util.Map;
 import java.util.Optional;
 
@@ -39,5 +40,74 @@ public class TestUpdater {
         String updateDescription = versionEntry.get().getValue();
         assertEquals("3.0", updaterVersion);
         assertEquals("Reescritura del sistema para hacerlo compatible con Spigot, Sponge y BungeeCord", updateDescription);
+    }
+
+    @Test
+    void defaultRepoIsRichicru() {
+        assertEquals("richicru/40ServidoresMC", Updater.DEFAULT_REPO,
+                "El repo por defecto debe ser el fork de richicru, no el upstream");
+    }
+
+    @Test
+    void defaultBranchIsDevelopment() {
+        assertEquals("development", Updater.DEFAULT_BRANCH);
+    }
+
+    @Test
+    void forGitHubBuildsCorrectUrl() throws Exception {
+        Updater updater = Updater.forGitHub(null, "3.0", "1.20.4",
+                "richicru/40ServidoresMC", "development");
+
+        Field urlField = Updater.class.getDeclaredField("updateUrl");
+        urlField.setAccessible(true);
+        String url = (String) urlField.get(updater);
+
+        assertEquals("https://raw.githubusercontent.com/richicru/40ServidoresMC/development/etc/v3.json", url);
+    }
+
+    @Test
+    void forGitHubStoresRepo() throws Exception {
+        Updater updater = Updater.forGitHub(null, "3.0", "1.20.4",
+                "my-org/my-fork", "main");
+
+        Field repoField = Updater.class.getDeclaredField("repo");
+        repoField.setAccessible(true);
+        String repo = (String) repoField.get(updater);
+
+        assertEquals("my-org/my-fork", repo);
+    }
+
+    @Test
+    void urlConstructorExtractsRepo() throws Exception {
+        Updater updater = new Updater(null, "3.0", "1.20.4",
+                "https://raw.githubusercontent.com/owner/project/main/etc/v3.json");
+
+        Field repoField = Updater.class.getDeclaredField("repo");
+        repoField.setAccessible(true);
+        String repo = (String) repoField.get(updater);
+
+        assertEquals("owner/project", repo);
+    }
+
+    @Test
+    void urlConstructorFallsBackToDefaultWhenUrlInvalid() throws Exception {
+        Updater updater = new Updater(null, "3.0", "1.20.4", "not-a-github-url");
+
+        Field repoField = Updater.class.getDeclaredField("repo");
+        repoField.setAccessible(true);
+        String repo = (String) repoField.get(updater);
+
+        assertEquals(Updater.DEFAULT_REPO, repo);
+    }
+
+    @Test
+    void urlConstructorFallsBackToDefaultWhenUrlNull() throws Exception {
+        Updater updater = new Updater(null, "3.0", "1.20.4", null);
+
+        Field repoField = Updater.class.getDeclaredField("repo");
+        repoField.setAccessible(true);
+        String repo = (String) repoField.get(updater);
+
+        assertEquals(Updater.DEFAULT_REPO, repo);
     }
 }

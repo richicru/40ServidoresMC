@@ -65,9 +65,10 @@ public class SpongePlugin implements CSPlugin {
     public void onServerStart(GameStartedServerEvent event) {
         apiClient = new ApiClient(this, new Gson());
         statsCache = new StatsCache(this);
+        String repo = csConfiguration.getString("update-repo", Updater.DEFAULT_REPO);
         String branch = csConfiguration.getString("update-branch", Updater.DEFAULT_BRANCH);
-        updater = new Updater(this, getPluginVersion(), this.game.getPlatform().getMinecraftVersion().getName(),
-                Updater.DEFAULT_REPO, branch);
+        updater = Updater.forGitHub(this, getPluginVersion(), this.game.getPlatform().getMinecraftVersion().getName(),
+                repo, branch);
         updater.checkearVersion(new CSConsoleSender(this));
 
         checkDefaultKey();

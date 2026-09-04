@@ -41,24 +41,64 @@ public class Updater {
     private final String UPDATED = "Versión actualizada";
     private final String NEW_VERSION = "Versión desactualizada. Nueva versión: %s. Changelog: %s. Descarga en: %s";
 
-    public static final String DEFAULT_REPO = "Cadiducho/40ServidoresMC";
+    public static final String DEFAULT_REPO = "richicru/40ServidoresMC";
     public static final String DEFAULT_BRANCH = "development";
     public static final String DEFAULT_UPDATE_PATH = "etc/v3.json";
 
+    private final String repo;
+
+    /**
+     * Crea un updater con los defaults (richicru/40ServidoresMC @ development).
+     */
     public Updater(CSPlugin instance, String vInstalada, String vMinecraft) {
-        this(instance, vInstalada, vMinecraft, DEFAULT_REPO, DEFAULT_BRANCH);
-    }
-
-    public Updater(CSPlugin instance, String vInstalada, String vMinecraft, String repo, String branch) {
         this(instance, vInstalada, vMinecraft,
-                "https://raw.githubusercontent.com/" + repo + "/" + branch + "/" + DEFAULT_UPDATE_PATH);
+                buildUpdateUrl(DEFAULT_REPO, DEFAULT_BRANCH), DEFAULT_REPO);
     }
 
-    public Updater(CSPlugin instance, String vInstalada, String vMinecraft, String updateUrl) {
+    /**
+     * Crea un updater apuntando a un repo y branch específicos de GitHub.
+     * La URL se construye automáticamente.
+     */
+    public static Updater forGitHub(CSPlugin instance, String vInstalada, String vMinecraft,
+                                    String repo, String branch) {
+        return new Updater(instance, vInstalada, vMinecraft, buildUpdateUrl(repo, branch), repo);
+    }
+
+    /**
+     * Constructor principal. Si el repo es null/vacío, se extrae de la URL o se usa DEFAULT_REPO.
+     */
+    public Updater(CSPlugin instance, String vInstalada, String vMinecraft, String updateUrl, String repo) {
         this.plugin = instance;
         this.versionInstalada = vInstalada;
         this.versionMinecraft = vMinecraft;
         this.updateUrl = updateUrl;
+        this.repo = (repo != null && !repo.isEmpty()) ? repo : extractRepoFromUrl(updateUrl, DEFAULT_REPO);
+    }
+
+    /**
+     * Constructor de retrocompatibilidad: si solo se pasa updateUrl, el repo se extrae
+     * de la URL (asumiendo formato raw.githubusercontent.com/{repo}/{branch}/...) o cae
+     * al DEFAULT_REPO si no se puede extraer.
+     */
+    public Updater(CSPlugin instance, String vInstalada, String vMinecraft, String updateUrl) {
+        this(instance, vInstalada, vMinecraft, updateUrl, extractRepoFromUrl(updateUrl, DEFAULT_REPO));
+    }
+
+    private static String buildUpdateUrl(String repo, String branch) {
+        return "https://raw.githubusercontent.com/" + repo + "/" + branch + "/" + DEFAULT_UPDATE_PATH;
+    }
+
+    private static String extractRepoFromUrl(String url, String fallback) {
+        if (url == null) return fallback;
+        int idx = url.indexOf("raw.githubusercontent.com/");
+        if (idx < 0) return fallback;
+        // Después viene: {owner}/{repo}/{branch}/{path}
+        String rest = url.substring(idx + "raw.githubusercontent.com/".length());
+        int firstSlash = rest.indexOf('/');
+        if (firstSlash < 0) return fallback;
+        int secondSlash = rest.indexOf('/', firstSlash + 1);
+        if (secondSlash < 0) return fallback;
+        return rest.substring(0, secondSlash);
     }
 
     /**
@@ -94,7 +134,7 @@ public class Updater {
                 String updateDescription = recommendedVersion.get().getValue();
 
                 if (!updaterVersion.equals(versionInstalada)) {
-                    String link = String.format("https://github.com/Cadiducho/40ServidoresMC/releases/tag/v%s", updaterVersion);
+                    String link = String.format("https://github.com/%s/releases/tag/v%s", repo, updaterVersion);
                     String format = String.format(NEW_VERSION, updaterVersion, updateDescription, link);
                     finalSender.sendMessageWithTag(format);
                 } else {
