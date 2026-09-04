@@ -122,32 +122,40 @@ public class Updater {
 
         final CSCommandSender finalSender = sender;
         fetchUpdate().thenAccept((UpdaterInfo updaterInfo) -> {
-            if (updaterInfo == null) {
-                if (confirmation) {
-                    finalSender.sendMessageWithTag(MessageKey.UPDATE_NO_INFO.resolve(plugin.getCSConfiguration()));
-                }
-                return;
-            }
-            Optional<Map.Entry<String, String>> recommendedVersion = updaterInfo.getPluginForMinecraft(versionMinecraft);
-            if (recommendedVersion.isPresent()) {
-                String updaterVersion = recommendedVersion.get().getKey();
-                String updateDescription = recommendedVersion.get().getValue();
-
-                if (!updaterVersion.equals(versionInstalada)) {
-                    String link = String.format("https://github.com/%s/releases/tag/v%s", repo, updaterVersion);
-                    String format = String.format(NEW_VERSION, updaterVersion, updateDescription, link);
-                    finalSender.sendMessageWithTag(format);
-                } else {
-                    finalSender.sendMessageWithTag(UPDATED);
-                }
-            } else if (confirmation) {
-                finalSender.sendMessageWithTag(MessageKey.UPDATE_NO_NEW.resolve(plugin.getCSConfiguration()));
-            }
+            // El Updater puede ser invocado por consola al arrancar; usamos runSyncGlobal
+            // para enrutarlo al thread correcto en Folia.
+            plugin.runSyncGlobal(() -> handleUpdaterResult(finalSender, updaterInfo, confirmation));
         }).exceptionally(e -> {
-            plugin.log(ERROR);
-            plugin.debugLog("Causa: " + e.getMessage());
+            plugin.runSyncGlobal(() -> {
+                plugin.log(ERROR);
+                plugin.debugLog("Causa: " + e.getMessage());
+            });
             return null;
         });
+    }
+
+    private void handleUpdaterResult(CSCommandSender sender, UpdaterInfo updaterInfo, boolean confirmation) {
+        if (updaterInfo == null) {
+            if (confirmation) {
+                sender.sendMessageWithTag(MessageKey.UPDATE_NO_INFO.resolve(plugin.getCSConfiguration()));
+            }
+            return;
+        }
+        Optional<Map.Entry<String, String>> recommendedVersion = updaterInfo.getPluginForMinecraft(versionMinecraft);
+        if (recommendedVersion.isPresent()) {
+            String updaterVersion = recommendedVersion.get().getKey();
+            String updateDescription = recommendedVersion.get().getValue();
+
+            if (!updaterVersion.equals(versionInstalada)) {
+                String link = String.format("https://github.com/%s/releases/tag/v%s", repo, updaterVersion);
+                String format = String.format(NEW_VERSION, updaterVersion, updateDescription, link);
+                sender.sendMessageWithTag(format);
+            } else {
+                sender.sendMessageWithTag(UPDATED);
+            }
+        } else if (confirmation) {
+            sender.sendMessageWithTag(MessageKey.UPDATE_NO_NEW.resolve(plugin.getCSConfiguration()));
+        }
     }
 
     private CompletableFuture<UpdaterInfo> fetchUpdate() {

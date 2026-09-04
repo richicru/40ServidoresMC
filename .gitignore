@@ -9,4 +9,9 @@
 /sponge/api7/build
 /sponge/api8/build
 /bungee/build
-/bungee/build
+
+# Local testing environment (script + cache)
+/.docker/
+/docker-compose.test.yml
+/scripts/*.log
+/.opencode-cache/

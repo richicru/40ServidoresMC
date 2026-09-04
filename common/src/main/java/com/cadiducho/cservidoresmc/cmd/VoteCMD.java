@@ -46,47 +46,57 @@ public class VoteCMD extends CSCommand {
 
         sender.sendMessageWithTag(MessageKey.VOTE_FETCHING.resolve(plugin.getCSConfiguration()));
         plugin.getApiClient().validateVote(sender.getName()).thenAccept((VoteResponse voteResponse) -> {
-            String web = voteResponse.getWeb();
-            VoteStatus status = voteResponse.getStatus();
-
-            switch (status) {
-                case NOT_VOTED:
-                    sender.sendNotVotedTodayLink(
-                            MessageKey.VOTE_NOT_VOTED_PREFIX.resolve(plugin.getCSConfiguration()), web);
-                    break;
-                case SUCCESS:
-                    sender.sendMessageWithTag(plugin.getCSConfiguration().getString("mensaje"));
-
-                    plugin.getCSConfiguration().customCommandsList().stream()
-                            .map(cmds -> cmds.replace("{0}", sender.getName()))
-                            .forEach(plugin::dispatchCommand);
-
-                    if (plugin.getCSConfiguration().getBoolean("broadcast.activado")) {
-                        plugin.broadcastMessage(plugin.getCSConfiguration().getString("broadcast.mensajeBroadcast").replace("{0}", sender.getName()));
-                    }
-
-                    if (plugin.getCSConfiguration().getBoolean("log-ip", false)) {
-                        String ip = plugin.getPlayerIp(sender.getName());
-                        plugin.log(String.format("[VoteReward] player=%s ip=%s",
-                                sender.getName(), ip != null ? ip : "unknown"));
-                    }
-                    break;
-                case ALREADY_VOTED:
-                    sender.sendMessageWithTag(MessageKey.VOTE_ALREADY_REWARDED.resolve(plugin.getCSConfiguration()));
-                    break;
-                case INVALID_KEY:
-                    sender.sendMessageWithTag(MessageKey.VOTE_INVALID_KEY.resolve(plugin.getCSConfiguration()));
-                    break;
-                default:
-                    sender.sendMessageWithTag(MessageKey.VOTE_ERROR.resolve(plugin.getCSConfiguration()));
-                    break;
-            }
+            plugin.runSyncForPlayer(sender.getName(), () -> handleVoteResponse(plugin, sender, voteResponse));
         }).exceptionally(e -> {
-            sender.sendMessageWithTag(MessageKey.VOTE_EXCEPTION.resolve(plugin.getCSConfiguration()));
-            plugin.logError("Excepción intentando votar: " + e.getMessage());
+            plugin.runSyncForPlayer(sender.getName(), () -> {
+                sender.sendMessageWithTag(MessageKey.VOTE_EXCEPTION.resolve(plugin.getCSConfiguration()));
+                plugin.logError("Excepción intentando votar: " + e.getMessage());
+            });
             return null;
         });
 
         return CommandResult.SUCCESS;
+    }
+
+    /**
+     * Lógica de respuesta al voto, extraída para poder ejecutarse en el thread correcto
+     * (entidad/jugador en Folia, main thread en Paper clásico).
+     */
+    private void handleVoteResponse(CSPlugin plugin, CSCommandSender sender, VoteResponse voteResponse) {
+        String web = voteResponse.getWeb();
+        VoteStatus status = voteResponse.getStatus();
+
+        switch (status) {
+            case NOT_VOTED:
+                sender.sendNotVotedTodayLink(
+                        MessageKey.VOTE_NOT_VOTED_PREFIX.resolve(plugin.getCSConfiguration()), web);
+                break;
+            case SUCCESS:
+                sender.sendMessageWithTag(plugin.getCSConfiguration().getString("mensaje"));
+
+                plugin.getCSConfiguration().customCommandsList().stream()
+                        .map(cmds -> cmds.replace("{0}", sender.getName()))
+                        .forEach(plugin::dispatchCommand);
+
+                if (plugin.getCSConfiguration().getBoolean("broadcast.activado")) {
+                    plugin.broadcastMessage(plugin.getCSConfiguration().getString("broadcast.mensajeBroadcast").replace("{0}", sender.getName()));
+                }
+
+                if (plugin.getCSConfiguration().getBoolean("log-ip", false)) {
+                    String ip = plugin.getPlayerIp(sender.getName());
+                    plugin.log(String.format("[VoteReward] player=%s ip=%s",
+                            sender.getName(), ip != null ? ip : "unknown"));
+                }
+                break;
+            case ALREADY_VOTED:
+                sender.sendMessageWithTag(MessageKey.VOTE_ALREADY_REWARDED.resolve(plugin.getCSConfiguration()));
+                break;
+            case INVALID_KEY:
+                sender.sendMessageWithTag(MessageKey.VOTE_INVALID_KEY.resolve(plugin.getCSConfiguration()));
+                break;
+            default:
+                sender.sendMessageWithTag(MessageKey.VOTE_ERROR.resolve(plugin.getCSConfiguration()));
+                break;
+        }
     }
 }

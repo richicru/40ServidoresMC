@@ -38,6 +38,10 @@ class TestStatsCMD {
         when(plugin.getStatsCache()).thenReturn(mock(StatsCache.class));
         doAnswer(inv -> { ((Runnable) inv.getArgument(0)).run(); return null; }).when(plugin).log(anyString());
         doAnswer(inv -> { ((Runnable) inv.getArgument(0)).run(); return null; }).when(plugin).logError(anyString());
+        doAnswer(inv -> { ((Runnable) inv.getArgument(1)).run(); return null; })
+                .when(plugin).runSyncForPlayer(anyString(), any(Runnable.class));
+        doAnswer(inv -> { ((Runnable) inv.getArgument(0)).run(); return null; })
+                .when(plugin).runSyncGlobal(any(Runnable.class));
     }
 
     @Test

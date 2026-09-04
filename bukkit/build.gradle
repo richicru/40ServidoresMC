@@ -12,6 +12,8 @@ repositories {
 dependencies {
   implementation project(':common')
   implementation 'org.bstats:bstats-bukkit:3.0.0'
+  // Spigot API como compileOnly: compatible con Spigot 1.16.5+ y con Paper.
+  // Para Folia usamos reflection en runtime (no son necesarias APIs de compilación).
   compileOnly 'org.spigotmc:spigot-api:1.16.5-R0.1-SNAPSHOT'
   // PlaceholderAPI desde JitPack (repo.extendedclip.com caído)
   compileOnly 'com.github.PlaceholderAPI:PlaceholderAPI:2.10.9'

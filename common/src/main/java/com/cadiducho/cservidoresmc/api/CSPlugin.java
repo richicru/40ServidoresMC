@@ -4,6 +4,8 @@ import com.cadiducho.cservidoresmc.ApiClient;
 import com.cadiducho.cservidoresmc.Updater;
 import com.cadiducho.cservidoresmc.config.CSConfiguration;
 
+import java.util.function.Consumer;
+
 public interface CSPlugin {
 
     void log(String text);
@@ -127,5 +129,48 @@ public interface CSPlugin {
      */
     default com.cadiducho.cservidoresmc.StatsCache getStatsCmdCache() {
         return null;
+    }
+
+    /**
+     * Ejecutar una tarea asociada a un jugador (mensaje, recompensa, etc.) en un
+     * thread válido para acceder a su API.
+     *
+     * <p>En <b>Folia</b>: se agenda en el {@code EntityScheduler} del jugador, que
+     * corre en el thread propietario de su región. Si el jugador está offline, se
+     * ejecuta inmediatamente en el thread actual (responsabilidad de quien llama
+     * comprobar si debe hacerlo).</p>
+     *
+     * <p>En <b>Paper / Bukkit clásico</b>: se agenda en el main thread scheduler.</p>
+     *
+     * <p>Las implementaciones distintas a Bukkit (Sponge) deben sobrescribir para
+     * usar su propio scheduler; la implementación por defecto simplemente ejecuta
+     * la tarea en línea.</p>
+     */
+    default void runSyncForPlayer(String playerName, Runnable task) {
+        if (task != null) task.run();
+    }
+
+    /**
+     * Ejecutar una tarea global (consola, updater, broadcast) en el thread principal
+     * del servidor.
+     *
+     * <p>En <b>Folia</b>: {@code GlobalRegionScheduler}. En clásico: main thread.</p>
+     */
+    default void runSyncGlobal(Runnable task) {
+        if (task != null) task.run();
+    }
+
+    /**
+     * Ejecutar una acción contra cada jugador conectado, enrutando la ejecución
+     * al thread correcto de cada uno (importante en Folia).
+     *
+     * <p>La implementación por defecto itera directamente — válido para plataformas
+     * no-regionadas como Sponge o Paper clásico donde siempre se ejecuta desde
+     * main thread.</p>
+     */
+    default void runForEachOnlinePlayer(Consumer<CSCommandSender> action) {
+        if (action == null) return;
+        // El default no debe iterar sin necesidad; las implementaciones reales (Bukkit)
+        // lo sobreescriben.
     }
 }

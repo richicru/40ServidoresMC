@@ -53,6 +53,16 @@ class TestVoteCMD {
             ((Runnable) invocation.getArgument(0)).run();
             return null;
         }).when(plugin).logError(anyString());
+        // Los schedulers del CSPlugin por defecto ejecutan el runnable en línea
+        // (modo "clásico Paper"): replicamos ese comportamiento en el mock.
+        doAnswer(invocation -> {
+            ((Runnable) invocation.getArgument(1)).run();
+            return null;
+        }).when(plugin).runSyncForPlayer(anyString(), any(Runnable.class));
+        doAnswer(invocation -> {
+            ((Runnable) invocation.getArgument(0)).run();
+            return null;
+        }).when(plugin).runSyncGlobal(any(Runnable.class));
     }
 
     @Test

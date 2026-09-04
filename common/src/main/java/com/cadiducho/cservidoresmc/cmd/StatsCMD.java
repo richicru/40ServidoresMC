@@ -30,40 +30,48 @@ public class StatsCMD extends CSCommand {
         CompletableFuture<ServerStats> future = fetchStats(plugin);
 
         future.thenAccept((ServerStats serverStats) -> {
-            if (serverStats.getServerName() == null) { //clave mal configurada
-                sender.sendMessageWithTag(MessageKey.STATS_INVALID_KEY.resolve(plugin.getCSConfiguration()));
-                return;
-            }
-
-            Map<String, String> vars = new HashMap<>();
-            vars.put("server", serverStats.getServerName());
-            vars.put("position", String.valueOf(serverStats.getPosition()));
-            sender.sendMessageWithTag(MessageKey.STATS_HEADER.resolve(plugin.getCSConfiguration(), vars));
-
-            sender.sendMessageWithTag(MessageKey.STATS_DAY_VOTES.resolve(plugin.getCSConfiguration(), "count",
-                    String.valueOf(serverStats.getDayVotes())));
-            sender.sendMessageWithTag(MessageKey.STATS_DAY_VOTES_REWARDED.resolve(plugin.getCSConfiguration(), "count",
-                    String.valueOf(serverStats.getRewardedDayVotes())));
-            sender.sendMessageWithTag(MessageKey.STATS_WEEK_VOTES.resolve(plugin.getCSConfiguration(), "count",
-                    String.valueOf(serverStats.getWeekVotes())));
-            sender.sendMessageWithTag(MessageKey.STATS_WEEK_VOTES_REWARDED.resolve(plugin.getCSConfiguration(), "count",
-                    String.valueOf(serverStats.getRewardedWeekVotes())));
-
-            if (serverStats.getLastVotes() != null && !serverStats.getLastVotes().isEmpty()) {
-                StringBuilder usuarios = new StringBuilder();
-                for (ServerVote vote : serverStats.getLastVotes()) {
-                    String color = vote.isRewarded() ? "&a" : "&c";
-                    usuarios.append(color).append(vote.getName()).append("&6, ");
-                }
-                String usuariosStr = usuarios.substring(0, usuarios.length() - 2) + ".";
-                sender.sendMessageWithTag(MessageKey.STATS_LAST_VOTES.resolve(plugin.getCSConfiguration(), "votes", usuariosStr));
-            }
+            // StatsCMD lo ejecuta cualquier emisor (incluida consola). Usamos runSyncGlobal,
+            // que enruta correctamente al thread principal incluso en Folia.
+            plugin.runSyncGlobal(() -> handleStatsResponse(plugin, sender, serverStats));
         }).exceptionally(ex -> {
-            sender.sendMessageWithTag(MessageKey.STATS_EXCEPTION.resolve(plugin.getCSConfiguration()));
-            plugin.logError("Excepción obteniendo estadisticas: " + ex.getMessage());
+            plugin.runSyncGlobal(() -> {
+                sender.sendMessageWithTag(MessageKey.STATS_EXCEPTION.resolve(plugin.getCSConfiguration()));
+                plugin.logError("Excepción obteniendo estadisticas: " + ex.getMessage());
+            });
             return null;
         });
         return CommandResult.SUCCESS;
+    }
+
+    private void handleStatsResponse(CSPlugin plugin, CSCommandSender sender, ServerStats serverStats) {
+        if (serverStats.getServerName() == null) { //clave mal configurada
+            sender.sendMessageWithTag(MessageKey.STATS_INVALID_KEY.resolve(plugin.getCSConfiguration()));
+            return;
+        }
+
+        Map<String, String> vars = new HashMap<>();
+        vars.put("server", serverStats.getServerName());
+        vars.put("position", String.valueOf(serverStats.getPosition()));
+        sender.sendMessageWithTag(MessageKey.STATS_HEADER.resolve(plugin.getCSConfiguration(), vars));
+
+        sender.sendMessageWithTag(MessageKey.STATS_DAY_VOTES.resolve(plugin.getCSConfiguration(), "count",
+                String.valueOf(serverStats.getDayVotes())));
+        sender.sendMessageWithTag(MessageKey.STATS_DAY_VOTES_REWARDED.resolve(plugin.getCSConfiguration(), "count",
+                String.valueOf(serverStats.getRewardedDayVotes())));
+        sender.sendMessageWithTag(MessageKey.STATS_WEEK_VOTES.resolve(plugin.getCSConfiguration(), "count",
+                String.valueOf(serverStats.getWeekVotes())));
+        sender.sendMessageWithTag(MessageKey.STATS_WEEK_VOTES_REWARDED.resolve(plugin.getCSConfiguration(), "count",
+                String.valueOf(serverStats.getRewardedWeekVotes())));
+
+        if (serverStats.getLastVotes() != null && !serverStats.getLastVotes().isEmpty()) {
+            StringBuilder usuarios = new StringBuilder();
+            for (ServerVote vote : serverStats.getLastVotes()) {
+                String color = vote.isRewarded() ? "&a" : "&c";
+                usuarios.append(color).append(vote.getName()).append("&6, ");
+            }
+            String usuariosStr = usuarios.substring(0, usuarios.length() - 2) + ".";
+            sender.sendMessageWithTag(MessageKey.STATS_LAST_VOTES.resolve(plugin.getCSConfiguration(), "votes", usuariosStr));
+        }
     }
 
     /**

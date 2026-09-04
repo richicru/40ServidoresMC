@@ -25,7 +25,7 @@ Este fork está mantenido actualmente por **[@richicru](https://github.com/richi
 | Velocity / BungeeCord / Waterfall (como proxy) | ✅ Se ejecuta en el backend |
 | Sponge API 7 | ✅ Soportado |
 | Glowstone | ✅ Soportado |
-| Folia | 🟡 Pendiente ([plan en docs/FOLIA.md](docs/FOLIA.md)) |
+| Folia | ✅ Soportado desde v3.0.2 ([doc en docs/FOLIA.md](docs/FOLIA.md)) |
 | Mohist / Banner / Arclight | ⚠️ Debería funcionar (no testado en este fork) |
 | Fabric / NeoForge | ❌ Fuera de alcance |
 

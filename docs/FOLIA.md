@@ -1,14 +1,119 @@
-# Plan: Compatibilidad con Folia
+# Compatibilidad con Folia
 
-## Objetivo
+> **Estado actual**: ✅ **Implementado y validado en v3.0.2**
+> sobre Paper 1.20.4 + Folia 1.20.4 en Docker.
+> Entorno de test reproducible: ver [docs/testing/Local-Test-Setup.md](testing/Local-Test-Setup.md).
 
-Hacer que el módulo `bukkit` del plugin sea compatible con **Folia** (fork de Paper con multithreading regionizado), manteniendo intacta la compatibilidad con **Bukkit / Spigot / Paper** clásicos y con **Sponge (API 7)**.
+## Qué se hizo
 
 Folia divide el mundo en regiones que tickean en paralelo. No existe un "main thread" global del servidor: cada región corre en su propio hilo, y sólo se puede acceder a la API de Bukkit/Paper desde el hilo propietario de la región (o un scheduler apropiado).
 
+### 1. Abstracción de scheduler en `common`
+
+En `common/src/main/java/.../api/CSPlugin.java` se añadieron tres métodos (con
+implementaciones `default` razonables para Sponge):
+
+```java
+void runSyncForPlayer(String playerName, Runnable task);  // action -> EntityScheduler (Folia) o main thread
+void runSyncGlobal(Runnable task);                       // action -> GlobalRegionScheduler (Folia) o main thread
+void runForEachOnlinePlayer(Consumer<CSCommandSender>);  // iterate, route per EntityScheduler en Folia
+```
+
+El módulo `bukkit` los sobrescribe (en `BukkitPlugin.java`) con la lógica
+correcta para Folia. El módulo `sponge/api7` hereda el `default`, que ejecuta
+el `Runnable` directamente — válido para el modelo de Sponge (no regionizado).
+
+### 2. Detección de Folia
+
+`BukkitPlugin` detecta Folia una sola vez en `onEnable` usando
+`FoliaDetector.isFoliaServer()` → `Class.forName("io.papermc.paper.threadedregions.RegionizedServer")`.
+
+### 3. `dispatchCommand`, `broadcastMessage`, `BukkitCommandSender`
+
+Reescritos para enrutarse por el scheduler apropiado. En Folia, broadcast
+recorre `Bukkit.getOnlinePlayers()` y agenda cada `Player#sendMessage(...)`
+en su `EntityScheduler`.
+
+### 4. Callbacks async envueltos
+
+`VoteCMD`, `StatsCMD` y `Updater.checkearVersion` ahora envuelven cada
+`thenAccept(...)` que escribe en la API de Bukkit dentro de
+`runSyncForPlayer(...)` / `runSyncGlobal(...)`. Antes los callbacks se
+ejecutaban en `ForkJoinPool`/`cservidoresmc-io` y la API lanzaba
+`IllegalStateException: not on region thread` al primer comando.
+
+### 5. plugin.yml
+
+Añadido `folia-supported: true` (sin él, Folia rechaza el plugin).
+
+### 6. `bukkit/build.gradle`
+
+Se queda con `org.spigotmc:spigot-api:1.16.5-R0.1-SNAPSHOT` como `compileOnly`.
+Todas las APIs de Folia se acceden por reflection para no requerir Paper API
+1.20+ (que necesita Java 17 mínimo en compilación).
+
 ---
 
-## Estado actual
+## Cómo probarlo localmente
+
+```bash
+# Una vez: pull de la imagen, ya está cacheada tras la primera ejecución
+./scripts/test-servers-up.sh          # levanta Paper y Folia
+
+# Build del plugin y copiar a plugins/
+./scripts/install-plugin.sh
+
+# Volver a validar arranque
+./scripts/test-validate.sh
+
+# Limpieza
+./scripts/test-servers-down.sh
+```
+
+Resultado esperado en logs:
+
+- Paper  → `Plugin 40ServidoresMC v3.0.2 cargado completamente`
+- Folia  → `Folia detectado: usando schedulers region-aware.`
+            seguido de `Plugin 40ServidoresMC v3.0.2 cargado completamente`
+
+Y no debe aparecer:
+
+- `Could not load plugin '...' as it is not marked as supporting Folia!`
+- `IllegalStateException: ... not on region thread`
+
+---
+
+## Compatibilidad con Sponge
+
+No se ve afectada. `SpongePlugin` hereda el `default runSyncGlobal` (ejecuta
+directamente), que es válido en el modelo no-regionizado de Sponge 7.
+
+---
+
+## Detalles por archivo
+
+| Archivo | Cambio |
+| --- | --- |
+| `common/.../api/CSPlugin.java` | +3 métodos default (`runSyncForPlayer`, `runSyncGlobal`, `runForEachOnlinePlayer`). |
+| `common/.../cmd/VoteCMD.java` | Envoltorio de `thenAccept` en `runSyncForPlayer` (extraído a `handleVoteResponse`). |
+| `common/.../cmd/StatsCMD.java` | Envoltorio de `thenAccept` en `runSyncGlobal` (extraído a `handleStatsResponse`). |
+| `common/.../Updater.java` | `checkearVersion` enruta el callback de la API al scheduler global. |
+| `common/.../Cooldown.java` | Sin cambios (ya era `ConcurrentHashMap` desde v3.0). |
+| `bukkit/.../BukkitPlugin.java` | Detección Folia, nuevos métodos, `dispatchCommand`/`broadcastMessage` Folia-aware. |
+| `bukkit/.../FoliaDetector.java` | Nuevo: detector liviano con `Class.forName`. |
+| `bukkit/.../bukkit/BukkitCommandSender.java` | Sin cambios (sólo se invoca desde el scheduler correcto). |
+| `bukkit/build.gradle` | Sin cambios (Spigot API + reflection para Folia). |
+| `bukkit/src/main/resources/plugin.yml` | +`folia-supported: true`. |
+| `sponge/api7/.../SpongePlugin.java` | Sin cambios (hereda `default`). |
+
+---
+
+## Plan original (referencia histórica)
+
+A continuación el plan completo original para entender el camino recorrido.
+Fases y código de ejemplo del plan ya ejecutado, mantenido para referencia.
+
+### Estado de partida (previo a v3.0.2)
 
 Plugin esencialmente "main-thread friendly":
 

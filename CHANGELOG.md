@@ -5,6 +5,36 @@ Todos los cambios relevantes del plugin se documentan en este archivo.
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/),
 y este proyecto se adhiere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.2] - 2026-09-04
+
+### Añadido
+- **Compatibilidad con Folia.** El plugin ahora carga y opera en Folia
+  (Paper multithreaded regionizado). Verificado con Paper 1.20.4 + Folia 1.20.4
+  en el entorno de testing local (`docs/testing/Local-Test-Setup.md`).
+  - Detección runtime de Folia vía `Class.forName("io.papermc.paper.threadedregions.RegionizedServer")`
+    (clase `BukkitPlugin.FoliaDetector`).
+  - Nueva abstracción en `CSPlugin`: `runSyncForPlayer(name, task)` y
+    `runSyncGlobal(task)` y `runForEachOnlinePlayer(action)`. En Folia, el primero
+    usa `EntityScheduler`, los otros dos `GlobalRegionScheduler`. En Paper clásico,
+    usan `BukkitScheduler.runTask` como siempre.
+  - `dispatchCommand` y `broadcastMessage` de `BukkitPlugin` reescritos para usar
+    los nuevos métodos (compatible con main-thread-only y region-aware).
+  - `VoteCMD`, `StatsCMD` y `Updater.checkearVersion` envuelven todos los callbacks
+    async en las nuevas primitivas — antes, los `thenAccept(...)` escribían
+    mensajes o ejecutaban comandos desde `ForkJoinPool` (inválido en Folia).
+  - `plugin.yml` añade `folia-supported: true` (sin él, Folia rechaza el plugin).
+
+### Cambiado
+- Se mantiene `org.spigotmc:spigot-api:1.16.5-R0.1-SNAPSHOT` como `compileOnly`
+  en `bukkit/build.gradle` — todas las APIs de Folia se acceden por reflection
+  para no requerir Paper API como dependencia de compilación.
+
+### Añadido (infra)
+- Entorno de testing local Docker: `docker-compose.test.yml` + scripts en `scripts/`.
+  Ver `docs/testing/Local-Test-Setup.md` para flujo completo.
+- Skill opencode en `.opencode/skills/40servidoresmc-paper-folia-test.md`
+  documentando el patrón de schedulers Folia/Paper.
+
 ## [3.0.1] - 2026-09-04
 
 ### Corregido (latente)

@@ -1,10 +1,14 @@
 name: 40ServidoresMC
 main: com.cadiducho.cservidoresmc.bukkit.BukkitPlugin
-version: 3.0.1
+version: 3.0.2
 author: Cadiducho
 api-version: 1.13
 description: Enlace para servidores de la web 40ServidoresMC!
 softdepend: [PlaceholderAPI]
+# Folia declara este flag en plugin.yml; sin él, Folia rechaza el plugin en carga.
+# Antes se detectó la incompatibilidad usando Class.forName sobre RegionizedServer.
+# https://docs.papermc.io/paper/dev/folia-support/#mark-plugin-as-supported-on-folia
+folia-supported: true
 commands:
     vote40:
         description: Comando principal de 40ServidoresMC
