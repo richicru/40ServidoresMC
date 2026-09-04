@@ -4,21 +4,46 @@ import com.cadiducho.cservidoresmc.api.CSPlugin;
 import com.cadiducho.cservidoresmc.model.ServerStats;
 import com.cadiducho.cservidoresmc.model.VoteResponse;
 import com.google.gson.Gson;
-import lombok.RequiredArgsConstructor;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.Reader;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
-@RequiredArgsConstructor
 public class ApiClient {
+
+    private static final int CONNECT_TIMEOUT_MS = 5000;
+    private static final int DEFAULT_IO_THREADS = 2;
 
     private final String API_URL = "https://40servidoresmc.es/api2.php?clave=";
     private final CSPlugin plugin;
     private final Gson gson;
+    private final ExecutorService ioExecutor;
+
+    public ApiClient(CSPlugin plugin, Gson gson) {
+        this(plugin, gson, defaultIoExecutor());
+    }
+
+    public ApiClient(CSPlugin plugin, Gson gson, ExecutorService ioExecutor) {
+        this.plugin = plugin;
+        this.gson = gson;
+        this.ioExecutor = ioExecutor;
+    }
+
+    private static ExecutorService defaultIoExecutor() {
+        return Executors.newFixedThreadPool(DEFAULT_IO_THREADS, r -> {
+            Thread t = new Thread(r, "cservidoresmc-io");
+            t.setDaemon(true);
+            return t;
+        });
+    }
 
     public String apiKey() {
         return plugin.getCSConfiguration().getString("clave");
@@ -28,6 +53,10 @@ public class ApiClient {
         return plugin.getCSConfiguration().getInt("readTimeOut");
     }
 
+    protected String getBaseUrl() {
+        return API_URL;
+    }
+
     public CompletableFuture<VoteResponse> validateVote(String player) {
         return CompletableFuture.supplyAsync(() -> {
             try {
@@ -35,7 +64,7 @@ public class ApiClient {
             } catch (IOException e) {
                 throw new IllegalStateException("Cannot execute API call", e);
             }
-        });
+        }, ioExecutor);
     }
 
     public CompletableFuture<ServerStats> fetchServerStats() {
@@ -45,7 +74,7 @@ public class ApiClient {
             } catch (IOException e) {
                 throw new IllegalStateException("Cannot execute API call", e);
             }
-        });
+        }, ioExecutor);
     }
 
     /**
@@ -55,16 +84,58 @@ public class ApiClient {
      * @param type Clase a la que convertir los datos recibidos
      * @param <T> Tipo que retornará
      * @return El objeto con los datos solicitados a la API
-     * @throws IOException Si falla al parsear o al conectarse a la API
+     * @throws IOException Si falla al parsear o al conectarse a la API, o si el servidor responde con código != 2xx
      */
     private <T> T fetchData(String params, String method, Class<T> type) throws IOException {
-        URL url = new URL(API_URL + apiKey() + params);
+        URL url = new URL(getBaseUrl() + apiKey() + params);
         HttpURLConnection connection = (HttpURLConnection) url.openConnection();
         connection.setRequestMethod(method);
+        connection.setConnectTimeout(CONNECT_TIMEOUT_MS);
         connection.setReadTimeout(timeOut());
+        connection.setRequestProperty("Accept", "application/json");
+        connection.setRequestProperty("User-Agent", "40ServidoresMC-Plugin/3.0");
 
-        try (Reader reader = new InputStreamReader(connection.getInputStream())) {
-            return gson.fromJson(reader, type);
+        int status = connection.getResponseCode();
+        InputStream stream = (status >= 200 && status < 300)
+                ? connection.getInputStream()
+                : connection.getErrorStream();
+
+        if (stream == null) {
+            throw new IOException("API call failed: HTTP " + status + " (no response body)");
+        }
+        if (status < 200 || status >= 300) {
+            String body;
+            try (Reader r = new InputStreamReader(stream, StandardCharsets.UTF_8)) {
+                StringBuilder sb = new StringBuilder();
+                char[] buf = new char[256];
+                int n;
+                while ((n = r.read(buf)) > 0) sb.append(buf, 0, n);
+                body = sb.toString();
+            }
+            throw new IOException("API call failed: HTTP " + status + " — " + body);
+        }
+
+        try (Reader reader = new InputStreamReader(stream, StandardCharsets.UTF_8)) {
+            T result = gson.fromJson(reader, type);
+            if (result == null) {
+                throw new IOException("API returned empty/null body for " + type.getSimpleName());
+            }
+            return result;
+        }
+    }
+
+    /**
+     * Liberar el executor de I/O. Llamar al deshabilitar el plugin.
+     */
+    public void shutdown() {
+        ioExecutor.shutdown();
+        try {
+            if (!ioExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
+                ioExecutor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            ioExecutor.shutdownNow();
+            Thread.currentThread().interrupt();
         }
     }
 }

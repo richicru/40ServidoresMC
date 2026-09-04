@@ -1,22 +1,23 @@
 package com.cadiducho.cservidoresmc;
 
-import java.util.HashMap;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 public class Cooldown {
 
     private final int time;
-    private final HashMap<String, Long> cooldowns;
+    private final ConcurrentMap<String, Long> cooldowns;
 
     public Cooldown(int time) {
         this.time = time;
-        this.cooldowns = new HashMap<>();
+        this.cooldowns = new ConcurrentHashMap<>();
     }
 
     public int getTime() {
         return time;
     }
 
-    private HashMap<String, Long> getCooldowns() {
+    private ConcurrentMap<String, Long> getCooldowns() {
         return cooldowns;
     }
 
@@ -32,15 +33,14 @@ public class Cooldown {
     }
 
     public boolean isCoolingDown(String player) {
-        if (getCooldowns().containsKey(player)) {
-            Long cooldownTime = getCooldowns().get(player);
-            if (cooldownTime >= System.currentTimeMillis() - (getTime() * 1000L)) {
-                return true;
-            } else {
-                // Si ya ha cumplido, eliminar del map
-                getCooldowns().remove(player);
-            }
+        Long cooldownTime = getCooldowns().get(player);
+        if (cooldownTime == null) {
+            return false;
         }
+        if (cooldownTime >= System.currentTimeMillis() - (getTime() * 1000L)) {
+            return true;
+        }
+        getCooldowns().remove(player, cooldownTime);
         return false;
     }
 }

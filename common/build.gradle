@@ -9,6 +9,7 @@ dependencies {
   testImplementation(platform('org.junit:junit-bom:5.7.0'))
   testImplementation('org.junit.jupiter:junit-jupiter')
   testImplementation('com.google.code.gson:gson:2.9.0')
+  testImplementation 'org.mockito:mockito-core:5.7.0'
   api 'com.google.guava:guava:23.0'
   
   api('org.spongepowered:configurate-core:3.7.2') {
