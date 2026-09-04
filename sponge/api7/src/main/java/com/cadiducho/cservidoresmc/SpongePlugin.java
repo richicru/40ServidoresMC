@@ -149,8 +149,8 @@ public class SpongePlugin implements CSPlugin {
     public String getPlayerIp(String playerName) {
         org.spongepowered.api.entity.living.player.Player player = Sponge.getServer().getPlayer(playerName).orElse(null);
         if (player == null) return null;
-        java.net.InetSocketAddress address = player.getConnection().getAddress().getAddress();
-        if (address == null) return null;
-        return address.getHostAddress();
+        java.net.InetSocketAddress address = player.getConnection().getAddress();
+        if (address == null || address.getAddress() == null) return null;
+        return address.getAddress().getHostAddress();
     }
 }
