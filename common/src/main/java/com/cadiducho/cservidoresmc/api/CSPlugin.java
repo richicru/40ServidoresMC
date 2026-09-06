@@ -74,10 +74,14 @@ public interface CSPlugin {
     String getPluginVersion();
 
     /**
-     * Ejecutar un comando deseado por la consola del servidor
-     * @param command El comando deseado
+     * Ejecutar un comando deseado por la consola del servidor.
+     *
+     * @return {@code true} si el comando se despachó a un handler y ejecutó sin
+     *         lanzar excepciones, {@code false} si no se encontró el comando o si
+     *         el handler lanzó. Usado por el flujo v3 para detectar entregas
+     *         fallidas y poder ackar con {@code entregado:false}.
      */
-    void dispatchCommand(String command);
+    boolean dispatchCommand(String command);
 
     /**
      * Enviar un mensaje a todos los usuarios
@@ -148,6 +152,31 @@ public interface CSPlugin {
      */
     default void runSyncForPlayer(String playerName, Runnable task) {
         if (task != null) task.run();
+    }
+
+    /**
+     * Versión con valor de retorno. Igual que {@link #runSyncForPlayer} pero la
+     * tarea devuelve un resultado que el caller recibe en el thread actual.
+     * Necesario para el flujo v3 de VoteCMD (decidir entregado:entregado:false
+     * según si la entrega tuvo éxito).
+     *
+     * <p>La implementación por defecto bloquea hasta que la tarea termina si está
+     * en un scheduler asíncrono. Las implementaciones Bukkit/Sponge pueden sobrescribir
+     * para hacer el bridging correcto (en Bukkit clásico: runTask bloqueante; en Folia:
+     * usando la API sincrónica sobre el EntityScheduler).</p>
+     */
+    default <T> T runSyncForPlayerWithResult(String playerName, java.util.function.Supplier<T> task) {
+        return task == null ? null : task.get();
+    }
+
+    /**
+     * ¿El jugador {@code playerName} está conectado en este momento?
+     *
+     * <p>Default: devuelve {@code true} (asumimos que sí si no se puede comprobar).
+     * Las implementaciones Bukkit/Sponge lo sobrescriben con su API real.</p>
+     */
+    default boolean isPlayerOnline(String playerName) {
+        return true;
     }
 
     /**

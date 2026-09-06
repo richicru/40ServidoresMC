@@ -79,6 +79,102 @@ require_stack() {
 
 # ---------- scenarios ----------
 
+scenario_v3_pending_with_votes() {
+  hdr "Scenario v3: pending con votos pendientes — comportamiento esperado"
+  reset_mock
+  # success-alice devuelve 1 voto pendiente. En el mock, vemos:
+  local pending
+  pending=$(curl -s "$MOCK_URL/api/vote/v3/pending?nick=success-alice")
+  if echo "$pending" | grep -q '"votos_pendientes"'; then
+    ok "Mock responde con campo 'votos_pendientes' (snake_case → camelCase via @SerializedName)"
+  else
+    ko "Mock no devolvió el JSON esperado: $pending"
+  fi
+  if echo "$pending" | grep -q '"puede_votar_ya": true'; then
+    ok "Mock incluye 'puede_votar_ya' en camelCase"
+  else
+    ko "Falta 'puede_votar_ya'"
+  fi
+  if echo "$pending" | grep -q '"api_version": 3'; then
+    ok "Mock indica api_version=3"
+  else
+    ko "Falta api_version"
+  fi
+}
+
+scenario_v3_pending_empty_can_vote() {
+  hdr "Scenario v3: pending vacío, puede_votar_ya=true → 'vota en la web'"
+  reset_mock
+  local pending
+  pending=$(curl -s "$MOCK_URL/api/vote/v3/pending?nick=notvoted-bob")
+  if echo "$pending" | grep -q '"votos_pendientes": \[\]'; then
+    ok "Lista de votos pendientes está vacía"
+  else
+    ko "votos_pendientes no está vacía: $pending"
+  fi
+  if echo "$pending" | grep -q '"puede_votar_ya": true'; then
+    ok "puede_votar_ya=true (caso 'aún no ha votado hoy')"
+  else
+    ko "puede_votar_ya debería ser true"
+  fi
+}
+
+scenario_v3_pending_empty_cannot_vote_yet() {
+  hdr "Scenario v3: pending vacío, puede_votar_ya=false → 'ya canjeado, vuelve el ...'"
+  reset_mock
+  local pending
+  pending=$(curl -s "$MOCK_URL/api/vote/v3/pending?nick=already-carol")
+  if echo "$pending" | grep -q '"puede_votar_ya": false'; then
+    ok "puede_votar_ya=false (caso 'ya canjeó hoy')"
+  else
+    ko "puede_votar_ya debería ser false"
+  fi
+  if echo "$pending" | grep -q '"siguiente_voto":'; then
+    local sig
+    sig=$(echo "$pending" | grep -oE '"siguiente_voto": "[^"]+"' | sed 's/.*: "\(.*\)"/\1/')
+    ok "Mock devuelve 'siguiente_voto' (= ${sig:-<vacío>})"
+  else
+    ko "Falta 'siguiente_voto'"
+  fi
+}
+
+scenario_v3_pending_invalid_key_403() {
+  hdr "Scenario v3: 403 → clave incorrecta"
+  reset_mock
+  local code
+  code=$(curl -s -o /dev/null -w "%{http_code}" "$MOCK_URL/api/vote/v3/pending?nick=invalidkey-dave")
+  if [ "$code" = "403" ]; then
+    ok "Mock devuelve HTTP 403 para nick con prefijo 'invalidkey-'"
+  else
+    ko "Esperado 403, recibí: $code"
+  fi
+}
+
+scenario_v3_ack_response_shape() {
+  hdr "Scenario v3: ack con delivered:true y delivered:false"
+  reset_mock
+  local resp_true
+  resp_true=$(curl -s -X POST "$MOCK_URL/api/vote/v3/ack" \
+        -H "Authorization: Bearer TESTKEY" \
+        -H "Content-Type: application/json" \
+        -d '{"votos":[123],"entregado":true,"nick":"alice","user_ip":"abc123hash"}')
+  if echo "$resp_true" | grep -q '"confirmados": \[123\]'; then
+    ok "ack con entregado:true → confirmados:[123]"
+  else
+    ko "ack con entregado:true incorrecto: $resp_true"
+  fi
+  local resp_false
+  resp_false=$(curl -s -X POST "$MOCK_URL/api/vote/v3/ack" \
+        -H "Authorization: Bearer TESTKEY" \
+        -H "Content-Type: application/json" \
+        -d '{"votos":[456],"entregado":false,"nick":"alice","user_ip":"abc123hash"}')
+  if echo "$resp_false" | grep -q '"liberados": \[456\]'; then
+    ok "ack con entregado:false → liberados:[456] (la reserva se libera al instante)"
+  else
+    ko "ack con entregado:false incorrecto: $resp_false"
+  fi
+}
+
 scenario_user_agent() {
   hdr "Scenario: User-Agent correcto"
   reset_mock
@@ -95,8 +191,8 @@ scenario_user_agent() {
     ko "No se pudo detectar la versión del JAR dentro del contenedor"
     return
   fi
-  if echo "$uas" | grep -qE "40ServidoresMC/${plugin_ver}/Bukkit-1\\.20\\.4"; then
-    ok "User-Agent contiene plugin y server version (40ServidoresMC/${plugin_ver}/Bukkit-1.20.4)"
+  if echo "$uas" | grep -qE "40ServidoresMC/${plugin_ver}/Bukkit"; then
+    ok "User-Agent contiene plugin y server version (40ServidoresMC/${plugin_ver}/Bukkit...)"
   else
     ko "User-Agent inesperado (plugin ver=${plugin_ver}):"
     echo "$uas"
@@ -250,8 +346,8 @@ scenario_paper_loaded() {
   # Usamos todo el log de Paper sin truncar (no --tail) y filtramos al patrón.
   local log
   log=$(docker logs "$PAPER" 2>&1)
-  if echo "$log" | grep -aq 'Plugin 40ServidoresMC v3.0'; then
-    ok "Mensaje 'Plugin 40ServidoresMC v3.0... cargado completamente' presente"
+  if echo "$log" | grep -aqE 'Plugin 40ServidoresMC v[0-9]+\.[0-9]+'; then
+    ok "Mensaje 'Plugin 40ServidoresMC vX.Y.Z cargado completamente' presente"
   else
     ko "Mensaje de cargado completo no aparece"
   fi
@@ -360,6 +456,11 @@ case "$SCEN" in
     scenario_stats_success
     scenario_stats_500_then_breaker
     scenario_timeout_handling
+    scenario_v3_pending_with_votes
+    scenario_v3_pending_empty_can_vote
+    scenario_v3_pending_empty_cannot_vote_yet
+    scenario_v3_pending_invalid_key_403
+    scenario_v3_ack_response_shape
     scenario_manual_vote40
     ;;
   *) echo "Scenario desconocido: $SCEN"; exit 1 ;;

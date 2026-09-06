@@ -31,7 +31,7 @@ import java.util.List;
 @Plugin(id = "cservidoresmc", name = "40ServidoresMC", version = SpongePlugin.PLUGIN_VERSION)
 public class SpongePlugin implements CSPlugin {
 
-    public static final String PLUGIN_VERSION = "3.0.5";
+    public static final String PLUGIN_VERSION = "3.1.0";
     @Inject private Logger logger;
     @Inject private Game game;
 
@@ -147,8 +147,15 @@ public class SpongePlugin implements CSPlugin {
     }
 
     @Override
-    public void dispatchCommand(String command) {
-        Sponge.getCommandManager().process(Sponge.getServer().getConsole(), command);
+    public boolean dispatchCommand(String command) {
+        try {
+            int success = Sponge.getCommandManager().process(Sponge.getServer().getConsole(), command)
+                    .getSuccessCount().orElse(0);
+            return success > 0;
+        } catch (Throwable t) {
+            logger.warn("Comando '" + command + "' lanzó excepción: " + t.getMessage());
+            return false;
+        }
     }
 
     @Override

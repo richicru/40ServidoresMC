@@ -2,7 +2,7 @@
 """
 Mock server que simula la API de 40servidoresmc.es para tests de integración.
 
-Estrategia de routing:
+Estrategia de routing para /api2.php (legacy v2):
     La respuesta a una validación de voto depende del prefijo del campo `nombre`:
 
     nombre = "success-<algo>"    → status="1"  (voto OK, recompensa al jugador)
@@ -15,6 +15,17 @@ Estrategia de routing:
     nombre = "empty-<algo>"      → cuerpo vacío
 
 Cualquier otro nombre → SUCCESS (status="1") con un "web" aleatorio.
+
+Para /api/vote/v3/pending (protocolo v3):
+    nick = "success-<algo>"      → 1 voto pendiente, puede_votar_ya=true
+    nick = "notvoted-<algo>"     → 0 votos, puede_votar_ya=true
+    nick = "already-<algo>"      → 0 votos, puede_votar_ya=false, siguiente_voto=2026-09-07T...
+    nick = "invalidkey-<algo>"   → HTTP 403
+    nick = "500-<algo>"          → HTTP 500
+    nick = "broken-<algo>"       → JSON malformado
+
+Para /api/vote/v3/ack (POST):
+    Sólo loguea el body recibido y devuelve {"api_version":3,"confirmados":[...],"entregado":true}.
 
 También expone:
     POST /__admin/reset         → limpia el log de peticiones y contadores
@@ -149,6 +160,45 @@ def _server_stats_payload() -> dict:
             for i in range(20)
         ],
     }
+
+
+def _pending_votes_payload(nick: str) -> tuple[int, dict, str]:
+    """
+    Devuelve (status, body, content_type) para /api/vote/v3/pending?nick=<nick>.
+    Misma lógica de prefijos que vote_response_for pero con el esquema v3.
+    """
+    if nick.startswith("invalidkey-"):
+        return 403, {"error": "invalid_key", "message": "Clave incorrecta"}, "application/json"
+    if nick.startswith("500-"):
+        return 500, {"error": "mock_500"}, "application/json"
+    if nick.startswith("broken-"):
+        return 200, {"this_is": "broken json"}, "application/json"
+
+    base = {
+        "api_version": 3,
+        "jugador": nick,
+        "servidor": {"id": 109, "nombre": "MockServer", "slug": "mockserver", "puesto": 30},
+        "reserva_segundos": 300,
+    }
+
+    if nick.startswith("notvoted-"):
+        return 200, {**base, "votos_pendientes": [], "puede_votar_ya": True, "siguiente_voto": None}, "application/json"
+    if nick.startswith("already-"):
+        return 200, {
+            **base,
+            "votos_pendientes": [],
+            "puede_votar_ya": False,
+            "siguiente_voto": "2026-09-07T03:31:07+02:00",
+        }, "application/json"
+    # default (incluye "success-") → 1 voto pendiente
+    return 200, {
+        **base,
+        "votos_pendientes": [
+            {"id": 123, "fecha": "2026-09-06T17:10:41+02:00", "dia": "2026-09-06", "origen": "web"}
+        ],
+        "puede_votar_ya": True,
+        "siguiente_voto": None,
+    }, "application/json"
 
 
 class MockHandler(BaseHTTPRequestHandler):
@@ -309,6 +359,52 @@ class MockHandler(BaseHTTPRequestHandler):
                 return
             code, payload, ctype = vote_response_for(nombre)
             self._send_body(code, json.dumps(payload).encode("utf-8"), ctype)
+            return
+
+        # === v3 protocol ===
+        if parsed.path == "/api/vote/v3/pending":
+            record("GET", parsed.path, query, ua, ip, body)
+            nick = (query.get("nick") or [""])[0]
+            if not nick:
+                self._send_body(400, b'{"error":"missing nick"}', "application/json")
+                return
+            # v3 también respeta los toggles globales de fallo / rate-limit.
+            if STATE["force_fail"] or (STATE["force_fail_until"] and STATE["force_fail_until"] > time.time()):
+                self._send_body(500, b'{"error":"mock force_fail active"}', "application/json")
+                return
+            if STATE["circuit_open_until"] and STATE["circuit_open_until"] > time.time():
+                self._send_body(503, b'{"error":"mock circuit_open active"}', "application/json")
+                return
+            if STATE["rate_limit_until"] and STATE["rate_limit_until"] > time.time():
+                self.send_response(429)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Retry-After", str(STATE["rate_limit_retry_after"]))
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            code, payload, ctype = _pending_votes_payload(nick)
+            self._send_body(code, json.dumps(payload).encode("utf-8"), ctype)
+            return
+
+        if parsed.path == "/api/vote/v3/ack":
+            # POST. El plugin envía un body JSON; lo registramos tal cual.
+            record("POST", parsed.path, query, ua, ip, body)
+            # Ack siempre devuelve éxito; los ids confirmados vienen del body.
+            try:
+                payload_obj = json.loads(body.decode("utf-8")) if body else {}
+            except Exception:
+                payload_obj = {}
+            ids = payload_obj.get("votos", [])
+            entregado = bool(payload_obj.get("entregado", False))
+            resp = {
+                "api_version": 3,
+                "confirmados": ids if entregado else [],
+                "ya_confirmados": [],
+                "liberados": [] if entregado else ids,
+                "desconocidos": [],
+                "entregado": True,
+            }
+            self._send_body(200, json.dumps(resp).encode("utf-8"), "application/json")
             return
 
         # Si no es un endpoint conocido, devolvemos 404

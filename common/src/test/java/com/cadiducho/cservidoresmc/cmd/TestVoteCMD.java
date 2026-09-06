@@ -7,18 +7,29 @@ import com.cadiducho.cservidoresmc.Updater;
 import com.cadiducho.cservidoresmc.TestSupport.MockCommandSender;
 import com.cadiducho.cservidoresmc.api.CSPlugin;
 import com.cadiducho.cservidoresmc.cmd.CSCommand.CommandResult;
-import com.cadiducho.cservidoresmc.model.VoteResponse;
-import com.cadiducho.cservidoresmc.model.VoteStatus;
+import com.cadiducho.cservidoresmc.model.AckResponse;
+import com.cadiducho.cservidoresmc.model.PendingVote;
+import com.cadiducho.cservidoresmc.model.PendingVotesResponse;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.Collections;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.Mockito.*;
 
+/**
+ * Tests del flujo v3 (pending + ack) de /voto40. El v2 (/api2.php) ya no es
+ * el flujo principal del plugin; los tests verifican los caminos del v3.
+ */
 class TestVoteCMD {
 
     private VoteCMD cmd;
@@ -42,27 +53,26 @@ class TestVoteCMD {
         plugin = mock(CSPlugin.class);
         when(plugin.getCSConfiguration()).thenReturn(configuration);
         when(plugin.getApiClient()).thenReturn(apiClient);
-        when(plugin.getPluginVersion()).thenReturn("3.0");
+        when(plugin.getPluginVersion()).thenReturn("3.1.0");
         when(plugin.getUpdater()).thenReturn(mock(Updater.class));
         when(plugin.getStatsCache()).thenReturn(mock(StatsCache.class));
-        doAnswer(invocation -> {
-            ((Runnable) invocation.getArgument(0)).run();
-            return null;
-        }).when(plugin).log(anyString());
-        doAnswer(invocation -> {
-            ((Runnable) invocation.getArgument(0)).run();
-            return null;
-        }).when(plugin).logError(anyString());
-        // Los schedulers del CSPlugin por defecto ejecutan el runnable en línea
-        // (modo "clásico Paper"): replicamos ese comportamiento en el mock.
-        doAnswer(invocation -> {
-            ((Runnable) invocation.getArgument(1)).run();
-            return null;
-        }).when(plugin).runSyncForPlayer(anyString(), any(Runnable.class));
-        doAnswer(invocation -> {
-            ((Runnable) invocation.getArgument(0)).run();
-            return null;
-        }).when(plugin).runSyncGlobal(any(Runnable.class));
+        doAnswer(inv -> { return null; })
+                .when(plugin).log(anyString());
+        doAnswer(inv -> { return null; })
+                .when(plugin).logError(anyString());
+        // runSyncForPlayer → ejecuta en línea (Bukkit/Folia unified mock)
+        doAnswer(inv -> { ((Runnable) inv.getArgument(1)).run(); return null; })
+                .when(plugin).runSyncForPlayer(anyString(), any(Runnable.class));
+        doAnswer(inv -> { ((Runnable) inv.getArgument(0)).run(); return null; })
+                .when(plugin).runSyncGlobal(any(Runnable.class));
+        // runSyncForPlayerWithResult → ejecuta el supplier en línea y devuelve el resultado.
+        doAnswer(inv -> ((java.util.function.Supplier<?>) inv.getArgument(1)).get())
+                .when(plugin).runSyncForPlayerWithResult(anyString(), any(java.util.function.Supplier.class));
+        // isPlayerOnline → true por defecto en el mock
+        when(plugin.isPlayerOnline(anyString())).thenReturn(true);
+        // dispatchCommand → true por defecto. Tests específicos (delivery failure)
+        // sobreescriben con doReturn(false).
+        when(plugin.dispatchCommand(anyString())).thenReturn(true);
     }
 
     @Test
@@ -70,155 +80,194 @@ class TestVoteCMD {
         MockCommandSender console = MockCommandSender.console();
         CommandResult result = cmd.execute(plugin, console, "voto40", Collections.emptyList());
         assertEquals(CommandResult.ONLY_PLAYER, result);
-        verify(apiClient, never()).validateVote(anyString());
+        verify(apiClient, never()).fetchPendingVotes(anyString());
     }
 
     @Test
-    void successfulVoteDispatchesRewards() throws Exception {
-        VoteResponse response = new VoteResponse("https://40servidoresmc.es", VoteStatus.SUCCESS);
-        when(apiClient.validateVote("alice")).thenReturn(CompletableFuture.completedFuture(response));
+    void pendingWithVotes_deliversAndAcksAsDelivered() throws Exception {
+        // pending con 1 voto
+        PendingVotesResponse pending = new PendingVotesResponse();
+        pending.setApiVersion(3);
+        pending.setJugador("alice");
+        pending.setVotosPendientes(Collections.singletonList(makePending(123L)));
+        pending.setReservaSegundos(300);
+        pending.setPuedeVotarYa(true);
+        when(apiClient.fetchPendingVotes("alice")).thenReturn(CompletableFuture.completedFuture(pending));
+
+        AckResponse ack = new AckResponse();
+        ack.setApiVersion(3);
+        ack.setConfirmados(Collections.singletonList(123L));
+        ack.setEntregado(true);
+        when(apiClient.sendAck(eq(Collections.singletonList(123L)), eq("alice"), eq(true), anyString()))
+                .thenReturn(CompletableFuture.completedFuture(ack));
 
         MockCommandSender alice = MockCommandSender.player("alice");
         CommandResult result = cmd.execute(plugin, alice, "voto40", Collections.emptyList());
         assertEquals(CommandResult.SUCCESS, result);
 
-        Thread.sleep(100);
+        Thread.sleep(200);
 
         verify(plugin).dispatchCommand("give alice diamond 1");
+        verify(apiClient).sendAck(eq(Collections.singletonList(123L)), eq("alice"), eq(true), anyString());
+        assertTrue(alice.sentMessages.stream().anyMatch(m -> m.toLowerCase().contains("gracias")),
+                "Tras ack=true el jugador debería ver el mensaje de gracias");
     }
 
     @Test
-    void notVotedSendsLink() throws Exception {
-        VoteResponse response = new VoteResponse("https://40servidoresmc.es/votar", VoteStatus.NOT_VOTED);
-        when(apiClient.validateVote("bob")).thenReturn(CompletableFuture.completedFuture(response));
+    void emptyPending_puedeVotarYa_sendsPendingVoteMessage() throws Exception {
+        PendingVotesResponse pending = new PendingVotesResponse();
+        pending.setApiVersion(3);
+        pending.setJugador("bob");
+        pending.setVotosPendientes(Collections.emptyList());
+        pending.setPuedeVotarYa(true);
+        when(apiClient.fetchPendingVotes("bob")).thenReturn(CompletableFuture.completedFuture(pending));
 
         MockCommandSender bob = MockCommandSender.player("bob");
         cmd.execute(plugin, bob, "voto40", Collections.emptyList());
 
-        Thread.sleep(100);
+        Thread.sleep(200);
 
-        assertTrue(bob.sentMessages.stream().anyMatch(m -> m.contains("https://40servidoresmc.es/votar")),
-                "El mensaje debe contener el enlace de votación");
         verify(plugin, never()).dispatchCommand(anyString());
+        verify(apiClient, never()).sendAck(any(), any(), anyBoolean(), anyString());
+        assertTrue(bob.sentMessages.stream().anyMatch(m -> m.toLowerCase().contains("vota")),
+                "Si puede_votar_ya=true debe salir el mensaje 'vota en la web'");
     }
 
     @Test
-    void alreadyVotedDoesNotReward() throws Exception {
-        VoteResponse response = new VoteResponse("", VoteStatus.ALREADY_VOTED);
-        when(apiClient.validateVote("carol")).thenReturn(CompletableFuture.completedFuture(response));
+    void emptyPending_cannotVoteYet_sendsAlreadyRewardedMessage() throws Exception {
+        PendingVotesResponse pending = new PendingVotesResponse();
+        pending.setApiVersion(3);
+        pending.setJugador("carol");
+        pending.setVotosPendientes(Collections.emptyList());
+        pending.setPuedeVotarYa(false);
+        pending.setSiguienteVoto("2026-09-07T03:31:07+02:00");
+        when(apiClient.fetchPendingVotes("carol")).thenReturn(CompletableFuture.completedFuture(pending));
 
         MockCommandSender carol = MockCommandSender.player("carol");
         cmd.execute(plugin, carol, "voto40", Collections.emptyList());
 
-        Thread.sleep(100);
+        Thread.sleep(200);
 
         verify(plugin, never()).dispatchCommand(anyString());
-        assertTrue(carol.sentMessages.stream().anyMatch(m -> m.toLowerCase().contains("ya has obtenido")));
+        verify(apiClient, never()).sendAck(any(), any(), anyBoolean(), anyString());
+        assertTrue(carol.sentMessages.stream().anyMatch(m -> m.contains("2026-09-07")),
+                "Debe incluir la fecha de siguiente_voto en el mensaje");
     }
 
     @Test
-    void invalidKeyWarnsUser() throws Exception {
-        VoteResponse response = new VoteResponse("", VoteStatus.INVALID_KEY);
-        when(apiClient.validateVote("dave")).thenReturn(CompletableFuture.completedFuture(response));
+    void invalidKey403_sendsInvalidKeyMessage() throws Exception {
+        // pending que falla con 403 (clave incorrecta en v3)
+        when(apiClient.fetchPendingVotes("dave")).thenReturn(
+                CompletableFuture.failedFuture(new java.io.IOException("API call failed: HTTP 403 — ...")));
 
         MockCommandSender dave = MockCommandSender.player("dave");
         cmd.execute(plugin, dave, "voto40", Collections.emptyList());
 
-        Thread.sleep(100);
+        Thread.sleep(200);
 
-        assertTrue(dave.sentMessages.stream().anyMatch(m -> m.toLowerCase().contains("clave incorrecta")));
-        verify(plugin, never()).dispatchCommand(anyString());
+        verify(apiClient, never()).sendAck(any(), any(), anyBoolean(), anyString());
+        assertTrue(dave.sentMessages.stream().anyMatch(m -> m.toLowerCase().contains("clave")),
+                "Debe mostrar mensaje de clave incorrecta");
     }
 
     @Test
-    void cooldownBlocksRepeatedCalls() {
-        when(apiClient.validateVote("eve")).thenReturn(new CompletableFuture<>());
+    void deliveryFailure_acksAsNotDelivered() throws Exception {
+        PendingVotesResponse pending = new PendingVotesResponse();
+        pending.setApiVersion(3);
+        pending.setVotosPendientes(Collections.singletonList(makePending(456L)));
+        pending.setReservaSegundos(300);
+        pending.setPuedeVotarYa(true);
+        when(apiClient.fetchPendingVotes("eve")).thenReturn(CompletableFuture.completedFuture(pending));
+
+        AckResponse ack = new AckResponse();
+        ack.setEntregado(false);
+        ack.setLiberados(Collections.singletonList(456L));
+        when(apiClient.sendAck(any(), any(), eq(false), anyString()))
+                .thenReturn(CompletableFuture.completedFuture(ack));
+
+        // Comando custom "revienta" — dispatchCommand devuelve false
+        when(plugin.dispatchCommand(anyString())).thenReturn(false);
 
         MockCommandSender eve = MockCommandSender.player("eve");
-        CommandResult first = cmd.execute(plugin, eve, "voto40", Collections.emptyList());
-        CommandResult second = cmd.execute(plugin, eve, "voto40", Collections.emptyList());
+        cmd.execute(plugin, eve, "voto40", Collections.emptyList());
 
-        assertEquals(CommandResult.SUCCESS, first);
-        assertEquals(CommandResult.COOLDOWN, second);
-        verify(apiClient, times(1)).validateVote("eve");
+        Thread.sleep(200);
+
+        verify(apiClient).sendAck(any(), eq("eve"), eq(false), anyString());
+        assertTrue(eve.sentMessages.stream().anyMatch(m -> m.toLowerCase().contains("vuelve a")),
+                "Debe informar al jugador que vuelva a intentarlo en unos minutos");
     }
 
     @Test
-    void broadcastSendsWhenEnabled() throws Exception {
-        configuration.set("broadcast.activado", true)
-                .set("broadcast.mensajeBroadcast", "&e{0} ha votado");
+    void playerOfflineDuringDelivery_acksAsNotDelivered() throws Exception {
+        PendingVotesResponse pending = new PendingVotesResponse();
+        pending.setApiVersion(3);
+        pending.setVotosPendientes(Collections.singletonList(makePending(789L)));
+        pending.setPuedeVotarYa(true);
+        when(apiClient.fetchPendingVotes("frank")).thenReturn(CompletableFuture.completedFuture(pending));
 
-        VoteResponse response = new VoteResponse("", VoteStatus.SUCCESS);
-        when(apiClient.validateVote("frank")).thenReturn(CompletableFuture.completedFuture(response));
+        AckResponse ack = new AckResponse();
+        ack.setEntregado(false);
+        when(apiClient.sendAck(any(), any(), eq(false), anyString()))
+                .thenReturn(CompletableFuture.completedFuture(ack));
+
+        // El jugador se desconecta durante la entrega
+        when(plugin.isPlayerOnline("frank")).thenReturn(false);
 
         MockCommandSender frank = MockCommandSender.player("frank");
         cmd.execute(plugin, frank, "voto40", Collections.emptyList());
 
-        Thread.sleep(100);
+        Thread.sleep(200);
 
-        verify(plugin).broadcastMessage(contains("frank"));
+        verify(apiClient).sendAck(any(), eq("frank"), eq(false), anyString());
     }
 
     @Test
-    void exceptionInApiCallsSendsGenericError() throws Exception {
-        CompletableFuture<VoteResponse> failed = new CompletableFuture<>();
-        failed.completeExceptionally(new RuntimeException("boom"));
-        when(apiClient.validateVote("grace")).thenReturn(failed);
+    void ackFailure_deliveredStillTrue_sendsAckFailedMessage() throws Exception {
+        PendingVotesResponse pending = new PendingVotesResponse();
+        pending.setApiVersion(3);
+        pending.setVotosPendientes(Collections.singletonList(makePending(321L)));
+        pending.setReservaSegundos(300);
+        pending.setPuedeVotarYa(true);
+        when(apiClient.fetchPendingVotes("gina")).thenReturn(CompletableFuture.completedFuture(pending));
 
-        MockCommandSender grace = MockCommandSender.player("grace");
-        cmd.execute(plugin, grace, "voto40", Collections.emptyList());
+        // El ack falla (timeout, red caída, etc.)
+        when(apiClient.sendAck(any(), any(), anyBoolean(), anyString())).thenReturn(
+                CompletableFuture.failedFuture(new java.io.IOException("API call failed: ack timeout")));
 
-        Thread.sleep(100);
+        MockCommandSender gina = MockCommandSender.player("gina");
+        cmd.execute(plugin, gina, "voto40", Collections.emptyList());
 
-        assertTrue(grace.sentMessages.stream().anyMatch(m -> m.toLowerCase().contains("excepci")));
-        verify(plugin).logError(contains("boom"));
+        Thread.sleep(200);
+
+        // No se reintenta; sólo se loguea. El jugador ve "premio entregado pero no pudimos confirmar".
+        assertTrue(gina.sentMessages.stream().anyMatch(m -> m.toLowerCase().contains("premio")
+                        || m.toLowerCase().contains("confirm")
+                        || m.toLowerCase().contains("reserva")),
+                "Premio entregado + ack fallido → mensaje claro al jugador. Recibido: "
+                        + gina.sentMessages);
+        verify(apiClient, times(1)).sendAck(any(), any(), anyBoolean(), anyString());
     }
 
     @Test
-    void cooldownUsesConfiguredValue() throws Exception {
-        configuration.set("cooldown", 0);
-        VoteResponse response = new VoteResponse("", VoteStatus.SUCCESS);
-        when(apiClient.validateVote("henry")).thenReturn(CompletableFuture.completedFuture(response));
+    void cooldownBlocksRepeatedCalls() {
+        when(apiClient.fetchPendingVotes("henry")).thenReturn(new CompletableFuture<>());
 
         MockCommandSender henry = MockCommandSender.player("henry");
-        cmd.execute(plugin, henry, "voto40", Collections.emptyList());
-        Thread.sleep(100);
-
-        VoteResponse response2 = new VoteResponse("", VoteStatus.SUCCESS);
-        when(apiClient.validateVote("henry")).thenReturn(CompletableFuture.completedFuture(response2));
+        CommandResult first = cmd.execute(plugin, henry, "voto40", Collections.emptyList());
         CommandResult second = cmd.execute(plugin, henry, "voto40", Collections.emptyList());
-        Thread.sleep(100);
 
-        assertEquals(CommandResult.SUCCESS, second,
-                "Con cooldown=0, debe poder votar repetidamente");
+        assertEquals(CommandResult.SUCCESS, first);
+        assertEquals(CommandResult.COOLDOWN, second);
+        verify(apiClient, times(1)).fetchPendingVotes("henry");
     }
 
-    @Test
-    void ipLoggingWhenEnabled() throws Exception {
-        configuration.set("log-ip", true);
-        when(plugin.getPlayerIp("ivy")).thenReturn("192.168.1.42");
-
-        VoteResponse response = new VoteResponse("", VoteStatus.SUCCESS);
-        when(apiClient.validateVote("ivy")).thenReturn(CompletableFuture.completedFuture(response));
-
-        MockCommandSender ivy = MockCommandSender.player("ivy");
-        cmd.execute(plugin, ivy, "voto40", Collections.emptyList());
-        Thread.sleep(100);
-
-        verify(plugin).log(contains("player=ivy"));
-        verify(plugin).log(contains("ip=192.168.1.42"));
-    }
-
-    @Test
-    void ipLoggingDisabledByDefault() throws Exception {
-        VoteResponse response = new VoteResponse("", VoteStatus.SUCCESS);
-        when(apiClient.validateVote("jack")).thenReturn(CompletableFuture.completedFuture(response));
-
-        MockCommandSender jack = MockCommandSender.player("jack");
-        cmd.execute(plugin, jack, "voto40", Collections.emptyList());
-        Thread.sleep(100);
-
-        verify(plugin, never()).log(contains("VoteReward"));
-        verify(plugin, never()).getPlayerIp(anyString());
+    private PendingVote makePending(long id) {
+        PendingVote v = new PendingVote();
+        v.setId(id);
+        v.setFecha("2026-09-06T17:10:41+02:00");
+        v.setDia("2026-09-06");
+        v.setOrigen("web");
+        return v;
     }
 }

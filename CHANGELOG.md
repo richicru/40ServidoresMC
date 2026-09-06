@@ -5,6 +5,57 @@ Todos los cambios relevantes del plugin se documentan en este archivo.
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/),
 y este proyecto se adhiere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.0] - 2026-09-06
+
+### Añadido
+- **Protocolo v3 de 40ServidoresMC.** `/api/vote/v3/pending` (Bearer auth) →
+  entregar premio → `/api/vote/v3/ack`. Arregla un bug real: con `/api2.php`
+  el server marca el voto como cobrado antes de que llegue la respuesta, así
+  que si se pierde la respuesta el jugador se queda sin premio. Con v3 el ack
+  explícito es lo que cierra la transacción.
+  - 4 ramas diferenciadas en `VoteCMD`: pending con votos (entregar + ack),
+    pending vacío + `puede_votar_ya=true` (vota en la web), pending vacío +
+    `puede_votar_ya=false` (ya canjeado, mostramos `siguiente_voto`), HTTP
+    403 (clave incorrecta).
+  - Si la entrega falla (algún `dispatchCommand` devuelve `false`, o el jugador
+    se desconecta durante la entrega), el ack se manda con `entregado:false`
+    para liberar la reserva al instante.
+  - Si el ack falla a su vez, la reserva expira sola a los 5 minutos (no
+    reintentamos: el protocolo v2 ya marca el voto como cobrado y un reintento
+    devolvería "ya recompensado").
+- **`user_ip` hasheada con SHA-256** antes de mandarla en el ack. Nunca
+  almacenamos ni enviamos la IP en claro. IPs inválidas (con puerto, con
+  scope IPv6, formato roto) se descartan silenciosamente.
+- **Nuevas `MessageKey`**: `VOTE_V3_PENDING_VOTE`, `VOTE_V3_ALREADY_REWARDED`,
+  `VOTE_V3_THANKS`, `VOTE_V3_DELIVERY_FAILED`, `VOTE_V3_ACK_FAILED`,
+  `VOTE_V3_INVALID_KEY`.
+- **Nuevo método en `CSPlugin`**: `runSyncForPlayerWithResult` (versión
+  síncrona de `runSyncForPlayer` que devuelve un valor) e `isPlayerOnline`
+  (default true, sobrescrito por Bukkit/Sponge).
+- **Mock-API**: rutas `/api/vote/v3/pending` y `/api/vote/v3/ack` con routing
+  por prefijo de nick (success-, notvoted-, already-, invalidkey-, 500-, broken-).
+- **Nuevo escenario `test-v3-vote-flow.sh`** y cinco nuevos escenarios v3
+  en `test-vote-scenarios.sh` (27/27 verdes en el entorno de testing local).
+
+### Cambiado
+- **`api-url` cambia de semántica**: ahora se interpreta como base URL
+  (scheme + host + port). El plugin construye los paths absolutos según el
+  endpoint (`/api2.php?clave=` para v2/legacy y stats; `/api/vote/v3/...`
+  para v3). Si la URL legacy `.../api2.php?clave=` se mantiene en config, el
+  plugin la trunca automáticamente. `getApiBase()` devuelve la base limpia
+  truncada; `getBaseUrl()` mantiene la URL legacy para los paths v2.
+- **`dispatchCommand` ahora devuelve `boolean`**: true si el comando se
+  despachó y ejecutó sin lanzar excepciones; false en caso contrario. Lo
+  usa `VoteCMD` para detectar entregas fallidas en el flujo v3.
+- Stats (`/stats40`) sigue usando el endpoint legacy `/api2.php` (no hay
+  equivalente v3).
+
+### No se hace
+- **No hay endpoint que devuelva todos los pendientes del servidor.**
+  El flujo sigue siendo bajo demanda (jugador ejecuta `/voto40`).
+- **No se reintenta pending.** Reintentar es seguro pero inútil en este
+  protocolo — los ids ya vienen en la respuesta.
+
 ## [3.0.5] - 2026-09-04
 
 ### Corregido (diagnóstico)

@@ -1,6 +1,9 @@
 package com.cadiducho.cservidoresmc;
 
 import com.cadiducho.cservidoresmc.api.CSPlugin;
+import com.cadiducho.cservidoresmc.model.AckRequest;
+import com.cadiducho.cservidoresmc.model.AckResponse;
+import com.cadiducho.cservidoresmc.model.PendingVotesResponse;
 import com.cadiducho.cservidoresmc.model.ServerStats;
 import com.cadiducho.cservidoresmc.model.VoteResponse;
 import com.google.gson.Gson;
@@ -11,7 +14,9 @@ import java.io.InputStreamReader;
 import java.io.Reader;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -27,6 +32,10 @@ public class ApiClient {
      * (sin www) pero el apex respondía 301 hacia {@code www.40servidoresmc.es} y eso añadía
      * un segundo handshake TLS por cada validación. Hoy por defecto vamos directos al host
      * canónico ({@code www.}). Sigue siendo override-able vía {@code api-url} en config.
+     *
+     * <p>En v3.1.0 (protocolo v3) este default sigue valiendo: lo interpretamos como base URL
+     * y construimos los paths absolutos a partir de él. Si la URL termina en
+     * {@code /api2.php?clave=} (formato legacy v2), la truncamos automáticamente a la base.</p>
      */
     static final String DEFAULT_API_URL = "https://www.40servidoresmc.es/api2.php?clave=";
 
@@ -67,12 +76,9 @@ public class ApiClient {
     }
 
     /**
-     * URL base de la API, configurable vía {@code api-url} en config.
-     * Si la clave falta o el valor queda vacío, se cae al default canónico
-     * ({@code https://www.40servidoresmc.es/api2.php?clave=}).
-     *
-     * <p>Se lee en cada fetch — no se cachea — para que un {@code /reload40}
-     * surta efecto inmediato sobre la URL sin reiniciar el servidor.</p>
+     * URL completa tal cual está en config. Se mantiene por compatibilidad con el
+     * flujo v2 (donde {@code getBaseUrl() + apiKey() + params} ya incluía el
+     * {@code /api2.php?clave=}). Para v3 se usa {@link #getApiBase()}.
      */
     protected String getBaseUrl() {
         String url = plugin.getCSConfiguration().getString("api-url", DEFAULT_API_URL);
@@ -82,9 +88,28 @@ public class ApiClient {
         return url;
     }
 
+    /**
+     * URL base (scheme + host + port) extraída de {@code api-url}. Si la URL
+     * configurada incluye path (e.g. {@code https://host/api2.php?clave=}), lo
+     * descartamos. Esto permite al usuario dejar el default legacy y que el
+     * plugin lo trunque automáticamente para construir los endpoints v3.
+     */
+    protected String getApiBase() {
+        String url = getBaseUrl();
+        if (url == null || url.isEmpty()) url = DEFAULT_API_URL;
+        int protocolEnd = url.indexOf("://");
+        if (protocolEnd < 0) return url;
+        int pathStart = url.indexOf('/', protocolEnd + 3);
+        return (pathStart > 0) ? url.substring(0, pathStart) : url;
+    }
+
     public CircuitBreaker getCircuitBreaker() {
         return circuitBreaker;
     }
+
+    // ============================================================
+    //  v2 — flujo legacy con /api2.php
+    // ============================================================
 
     public CompletableFuture<VoteResponse> validateVote(String player) {
         return CompletableFuture.supplyAsync(() -> {
@@ -99,7 +124,11 @@ public class ApiClient {
     public CompletableFuture<ServerStats> fetchServerStats() {
         return CompletableFuture.supplyAsync(() -> {
             try {
-                return fetchData("&estadisticas=1", "GET", ServerStats.class);
+                // stats usa el endpoint legacy /api2.php (no hay equivalente v3).
+                // Si api-url es la bare base (uso v3), añadimos /api2.php?clave=;
+                // si ya termina en /api2.php?clave= (uso v2 legacy), usamos como está.
+                String v2Url = getApiBase() + "/api2.php?clave=" + apiKey() + "&estadisticas=1";
+                return executeRequest(v2Url, "GET", null, null, ServerStats.class);
             } catch (IOException e) {
                 throw new IllegalStateException("Cannot execute API call", e);
             }
@@ -107,24 +136,80 @@ public class ApiClient {
     }
 
     /**
-     * Obtener datos de la API, según unos parámetros dados, y parsearlo a un objeto
-     * @param params Parámetros HTTP de la petición
-     * @param method Método HTTP
-     * @param type Clase a la que convertir los datos recibidos
-     * @param <T> Tipo que retornará
-     * @return El objeto con los datos solicitados a la API
-     * @throws IOException Si falla al parsear o al conectarse a la API, o si el servidor responde con código != 2xx
+     * v2 — ejecuta la llamada legacy a /api2.php?clave=X con clave en query string.
+     * Usado por validateVote (legacy) si algún admin sigue con la versión vieja
+     * y por fetchServerStats (no hay endpoint v3 de stats).
      */
     private <T> T fetchData(String params, String method, Class<T> type) throws IOException {
+        String v2Url = getApiBase() + "/api2.php?clave=" + apiKey() + params;
+        return executeRequest(v2Url, method, null, null, type);
+    }
+
+    // ============================================================
+    //  v3 — protocolo nuevo, Bearer auth
+    // ============================================================
+
+    /**
+     * {@code GET /api/vote/v3/pending?nick=...} con {@code Authorization: Bearer <clave>}.
+     * Devuelve los votos pendientes que el jugador puede cobrar.
+     */
+    public CompletableFuture<PendingVotesResponse> fetchPendingVotes(String nick) {
+        return CompletableFuture.supplyAsync(() -> {
+            try {
+                String path = "/api/vote/v3/pending?nick=" + URLEncoder.encode(nick, "UTF-8");
+                return executeRequest(getApiBase() + path, "GET", "Bearer " + apiKey(), null,
+                        PendingVotesResponse.class);
+            } catch (IOException e) {
+                throw new IllegalStateException("Cannot execute V3 pending API call", e);
+            }
+        }, ioExecutor);
+    }
+
+    /**
+     * {@code POST /api/vote/v3/ack} con Bearer auth y body JSON.
+     *
+     * @param delivered true si la entrega del premio fue exitosa, false si algo
+     *                  falló y queremos liberar la reserva al instante.
+     * @param userIpHash SHA-256 del {@code getPlayerIp()} del jugador, o "" si
+     *                   la IP no estaba disponible.
+     */
+    public CompletableFuture<AckResponse> sendAck(List<Long> voteIds, String nick,
+                                                 boolean delivered, String userIpHash) {
+        AckRequest payload = new AckRequest(voteIds, delivered, nick,
+                (userIpHash == null) ? "" : userIpHash);
+        return CompletableFuture.supplyAsync(() -> {
+            try {
+                String body = gson.toJson(payload);
+                return executeRequest(getApiBase() + "/api/vote/v3/ack", "POST",
+                        "Bearer " + apiKey(), body, AckResponse.class);
+            } catch (IOException e) {
+                throw new IllegalStateException("Cannot execute V3 ack API call", e);
+            }
+        }, ioExecutor);
+    }
+
+    // ============================================================
+    //  Helper compartido: hace la HTTP request, parsea el body y aplica
+    //  circuit breaker / rate limiting / 4xx-5xx.
+    // ============================================================
+
+    /**
+     * Ejecuta una llamada HTTP y parsea la respuesta como el tipo pedido.
+     *
+     * @param fullUrl URL completa, ya con path y query params concatenados.
+     * @param method  "GET" o "POST".
+     * @param bearer  Si no es null, se envía como {@code Authorization: Bearer <bearer>}.
+     *                 Si es null, no se manda header (modo legacy v2 usa ?clave= en la URL).
+     * @param body    Cuerpo JSON para POST. Null para GET.
+     * @param type    Clase para deserializar la respuesta.
+     */
+    private <T> T executeRequest(String fullUrl, String method, String bearer, String body, Class<T> type) throws IOException {
         if (!circuitBreaker.canExecute()) {
-            // Lanzamos la excepción propia para que el caller (VoteCMD/StatsCMD)
-            // pueda distinguir "el circuito está abierto, no he llamado" de "la
-            // llamada falló de verdad" y mostrar un mensaje adecuado al jugador.
             long retryMs = circuitBreaker.backoffRemainingMs();
             throw new CircuitBreaker.CircuitOpenException(retryMs);
         }
 
-        URL url = new URL(getBaseUrl() + apiKey() + params);
+        URL url = new URL(fullUrl);
         HttpURLConnection connection = (HttpURLConnection) url.openConnection();
         connection.setRequestMethod(method);
         connection.setConnectTimeout(CONNECT_TIMEOUT_MS);
@@ -132,6 +217,17 @@ public class ApiClient {
         connection.setRequestProperty("Accept", "application/json");
         connection.setRequestProperty("User-Agent",
                 UserAgent.build(plugin.getPluginVersion(), plugin.getServerPlatform(), plugin.getServerVersion()));
+        if (bearer != null && !bearer.isEmpty()) {
+            connection.setRequestProperty("Authorization", bearer);
+        }
+
+        if (body != null) {
+            connection.setDoOutput(true);
+            connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+            byte[] payload = body.getBytes(StandardCharsets.UTF_8);
+            connection.getOutputStream().write(payload);
+            connection.getOutputStream().close();
+        }
 
         int status;
         try {
@@ -155,16 +251,16 @@ public class ApiClient {
                 throw new IOException("API call failed: HTTP " + status + " (no response body)");
             }
             if (status < 200 || status >= 300) {
-                String body;
+                String bodyText;
                 try (Reader r = new InputStreamReader(stream, StandardCharsets.UTF_8)) {
                     StringBuilder sb = new StringBuilder();
                     char[] buf = new char[256];
                     int n;
                     while ((n = r.read(buf)) > 0) sb.append(buf, 0, n);
-                    body = sb.toString();
+                    bodyText = sb.toString();
                 }
                 circuitBreaker.recordFailure();
-                throw new IOException("API call failed: HTTP " + status + " — " + body);
+                throw new IOException("API call failed: HTTP " + status + " — " + bodyText);
             }
 
             try (Reader reader = new InputStreamReader(stream, StandardCharsets.UTF_8)) {

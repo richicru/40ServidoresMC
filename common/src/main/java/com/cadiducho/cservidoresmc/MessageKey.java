@@ -21,6 +21,14 @@ public enum MessageKey {
     VOTE_CIRCUIT_OPEN("vote-circuit-open", "&eReintentando en {seconds}s. Tu voto no se ha perdido."),
     VOTE_RATE_LIMITED("vote-rate-limited", "&eAPI saturada (límite 20/min). Reintenta en {seconds}s."),
 
+    // Protocolo v3 — pending + ack
+    VOTE_V3_PENDING_VOTE("vote-v3-pending-vote", "&6No has votado hoy. Puedes hacerlo en &a"),
+    VOTE_V3_ALREADY_REWARDED("vote-v3-already-rewarded", "&aYa has canjeado tu premio. Vuelve a votar el &6{siguiente_voto}&a."),
+    VOTE_V3_THANKS("vote-v3-thanks", "&a¡Gracias por votar! Tu premio ha sido entregado."),
+    VOTE_V3_DELIVERY_FAILED("vote-v3-delivery-failed", "&cNo pudimos entregar tu premio. Vuelve a /voto40 en unos minutos (la reserva se ha liberado)."),
+    VOTE_V3_ACK_FAILED("vote-v3-ack-failed", "&aPremio entregado, pero no pudimos confirmarlo al servidor. La reserva expirará sola en 5 min."),
+    VOTE_V3_INVALID_KEY("vote-v3-invalid-key", "&cClave incorrecta. Entra en &bhttps://40servidoresmc.es/miservidor.php &cy cambia esta."),
+
     STATS_INVALID_KEY("stats-invalid-key", "&cClave incorrecta. Entra en &bhttps://40servidoresmc.es/miservidor.php &cy cambia esta."),
     STATS_HEADER("stats-header", "&9==> &7{server} &festá en el TOP &a{position}"),
     STATS_DAY_VOTES("stats-day-votes", "&bVotos hoy: &6{count}"),

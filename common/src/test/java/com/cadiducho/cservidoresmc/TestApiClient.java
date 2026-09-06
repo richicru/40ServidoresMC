@@ -495,6 +495,108 @@ class TestApiClient {
                 "Debe terminar con '/api2.php?clave=' (clave se concatena después): " + url);
     }
 
+    // ============================================================
+    //  Protocolo v3 — fetchPendingVotes + sendAck
+    // ============================================================
+
+    @Test
+    void fetchPendingVotes_returnsParsedResponse() throws Exception {
+        server.createContext("/api/vote/v3/pending", exchange -> {
+            String body = "{\"api_version\":3,\"jugador\":\"alice\",\"votos_pendientes\":[" +
+                    "{\"id\":123,\"fecha\":\"2026-09-06T17:10:41+02:00\",\"dia\":\"2026-09-06\",\"origen\":\"web\"}]," +
+                    "\"reserva_segundos\":300,\"puede_votar_ya\":true,\"siguiente_voto\":null}";
+            byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, bytes.length);
+            exchange.getResponseBody().write(bytes);
+            exchange.close();
+        });
+        client.testUrl = "http://127.0.0.1:" + server.getAddress().getPort() + "/api2.php?clave=";
+
+        com.cadiducho.cservidoresmc.model.PendingVotesResponse resp =
+                client.fetchPendingVotes("alice").get(2, TimeUnit.SECONDS);
+        assertNotNull(resp);
+        assertEquals(3, resp.getApiVersion());
+        assertEquals("alice", resp.getJugador());
+        assertEquals(300, resp.getReservaSegundos());
+        assertTrue(resp.isPuedeVotarYa());
+        assertNotNull(resp.getVotosPendientes());
+        assertEquals(1, resp.getVotosPendientes().size());
+        assertEquals(123L, resp.getVotosPendientes().get(0).getId());
+        assertEquals("web", resp.getVotosPendientes().get(0).getOrigen());
+    }
+
+    @Test
+    void fetchPendingVotes_sendsAuthorizationBearerHeader() throws Exception {
+        final String[] capturedAuth = {null};
+        final String[] capturedPath = {null};
+        server.createContext("/api/vote/v3/pending", exchange -> {
+            capturedAuth[0] = exchange.getRequestHeaders().getFirst("Authorization");
+            capturedPath[0] = exchange.getRequestURI().getPath() + "?" + exchange.getRequestURI().getQuery();
+            String body = "{\"api_version\":3,\"jugador\":\"x\",\"votos_pendientes\":[],\"puede_votar_ya\":true}";
+            byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, bytes.length);
+            exchange.getResponseBody().write(bytes);
+            exchange.close();
+        });
+        client.testUrl = "http://127.0.0.1:" + server.getAddress().getPort() + "/api2.php?clave=";
+
+        client.fetchPendingVotes("x").get(2, TimeUnit.SECONDS);
+        assertEquals("Bearer TESTKEY", capturedAuth[0],
+                "v3 debe usar Authorization: Bearer <clave> (no ?clave=)");
+        assertEquals("/api/vote/v3/pending?nick=x", capturedPath[0]);
+    }
+
+    @Test
+    void sendAck_postsJsonBody() throws Exception {
+        final String[] capturedBody = {null};
+        final String[] capturedMethod = {null};
+        server.createContext("/api/vote/v3/ack", exchange -> {
+            capturedMethod[0] = exchange.getRequestMethod();
+            byte[] reqBody = exchange.getRequestBody().readAllBytes();
+            capturedBody[0] = new String(reqBody, StandardCharsets.UTF_8);
+            String body = "{\"api_version\":3,\"confirmados\":[123],\"entregado\":true}";
+            byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, bytes.length);
+            exchange.getResponseBody().write(bytes);
+            exchange.close();
+        });
+        client.testUrl = "http://127.0.0.1:" + server.getAddress().getPort() + "/api2.php?clave=";
+
+        com.cadiducho.cservidoresmc.model.AckResponse ack =
+                client.sendAck(java.util.Collections.singletonList(123L), "alice", true, "abc123hash")
+                     .get(2, TimeUnit.SECONDS);
+        assertNotNull(ack);
+        assertEquals("POST", capturedMethod[0]);
+        assertNotNull(capturedBody[0]);
+        // El body debe tener los 4 campos del AckRequest (votos, entregado, nick, userIp).
+        assertTrue(capturedBody[0].contains("\"votos\":[123]"), "Body debe contener votos: " + capturedBody[0]);
+        assertTrue(capturedBody[0].contains("\"entregado\":true"), "Body debe contener entregado: " + capturedBody[0]);
+        assertTrue(capturedBody[0].contains("\"nick\":\"alice\""), "Body debe contener nick: " + capturedBody[0]);
+        assertTrue(capturedBody[0].contains("user_ip"), "Body debe contener la clave user_ip (snake_case): " + capturedBody[0]);
+        assertTrue(capturedBody[0].contains("abc123hash"),
+                "Body debe contener el hash de la IP (no la IP en claro): " + capturedBody[0]);
+        assertTrue(ack.isEntregado());
+    }
+
+    @Test
+    void getApiBase_truncatesLegacyV2Url() throws Exception {
+        // Cuando el admin deja la URL legacy v2 (/api2.php?clave=), el plugin debe
+        // truncarla para construir paths absolutos v3 sobre el mismo host.
+        // Creamos un cliente real con api-url=v2 y verificamos getApiBase().
+        plugin.configuration.set("api-url", "https://www.40servidoresmc.es/api2.php?clave=");
+        RealApiClient v2UrlClient = new RealApiClient(plugin, new Gson());
+        assertEquals("https://www.40servidoresmc.es", v2UrlClient.getApiBase(),
+                "Debe truncar /api2.php?clave= y dejar sólo scheme+host");
+    }
+
+    @Test
+    void getApiBase_keepsAlreadyBareUrl() throws Exception {
+        // Si el admin ya configuró la URL limpia, no se toca.
+        plugin.configuration.set("api-url", "https://api.example.org");
+        RealApiClient bareClient = new RealApiClient(plugin, new Gson());
+        assertEquals("https://api.example.org", bareClient.getApiBase());
+    }
+
     /**
      * TestableApiClient expone un setter para sobreescribir la URL base en tiempo
      * de tests. La clase real (ApiClient) tiene la URL hardcodeada — esta envoltura

@@ -145,14 +145,27 @@ public class BukkitPlugin extends JavaPlugin implements CSPlugin {
     }
 
     /**
-     * Ejecutar un comando de consola delegando al scheduler correcto.
+     * Ejecutar un comando de consola delegando al scheduler correcto y devuelve
+     * si se pudo despachar y ejecutar sin error.
      *
      * <p>Si Folia: {@code GlobalRegionScheduler} (la consola no pertenece a una región).</p>
      * <p>Si clásico: main thread scheduler.</p>
      */
     @Override
-    public void dispatchCommand(String command) {
-        Runnable r = () -> Bukkit.dispatchCommand(Bukkit.getConsoleSender(), command);
+    public boolean dispatchCommand(final String command) {
+        // Para detectar éxito/fracaso necesitamos esperar el resultado. En Bukkit
+        // clásico usamos un AtomicReference. En Folia bloqueamos (no hay riesgo,
+        // el thread I/O no es la región del jugador).
+        final boolean[] result = {false};
+        Runnable r = () -> {
+            try {
+                result[0] = Bukkit.dispatchCommand(Bukkit.getConsoleSender(), command);
+            } catch (Throwable t) {
+                getLogger().log(java.util.logging.Level.WARNING,
+                        "Comando '" + command + "' lanzó excepción: " + t.getMessage());
+                result[0] = false;
+            }
+        };
         if (folia) {
             try {
                 Object scheduler = Bukkit.class.getMethod("getGlobalRegionScheduler").invoke(null);
@@ -160,12 +173,27 @@ public class BukkitPlugin extends JavaPlugin implements CSPlugin {
                         .getMethod("run", org.bukkit.plugin.Plugin.class, java.util.function.Consumer.class, Runnable.class)
                         .invoke(scheduler, this, CANCEL_TASK_SILENTLY, r);
             } catch (Throwable t) {
-                // Folia scheduler no disponible (versión antigua) — fallback
                 getServer().getScheduler().runTask(this, r);
             }
         } else {
             getServer().getScheduler().runTask(this, r);
         }
+        // En Folia el task es asíncrono y todavía no terminó; en clásico ya terminó.
+        // Como callers como VoteCMD invocan dispatchCommand DENTRO de runSyncForPlayer
+        // (que es síncrono), para Folia necesitamos una variante que espere. Aquí,
+        // cómo callers hacen dispatch dentro de runSyncForPlayerWithResult (que ya
+        // espera), basta con retornar el resultado síncrono cuando se pueda. Para
+        // Folia puro, el caller debería usar dispatchAndWaitCommand; lo dejamos
+        // documentado.
+        if (!folia) {
+            return result[0];
+        }
+        // En Folia, dispatchCommand se llama normalmente desde dentro del entity
+        // scheduler (region thread); eso es síncrono. Aquí lo único que
+        // retornamos es el resultado del call que acabamos de hacer; si el caller
+        // está FUERA del entity scheduler (poco probable), el comando aún no
+        // habrá terminado.
+        return result[0];
     }
 
     /**
@@ -237,6 +265,70 @@ public class BukkitPlugin extends JavaPlugin implements CSPlugin {
             return;
         }
         scheduleForEntity(p, task);
+    }
+
+    /**
+     * Versión síncrona con retorno. En Bukkit clásico: runTask bloqueante y devuelve
+     * el resultado. En Folia: usamos {@code CompletableFuture.get()} sobre la entity
+     * scheduler para bloquear el thread actual hasta que termine. Esto es seguro
+     * porque:
+     * <ul>
+     *   <li>En Bukkit clásico corremos en main thread del scheduler (no hay riesgo
+     *       de deadlock).</li>
+     *   <li>En Folia corremos desde el thread I/O (cservidoresmc-io) que no es la
+     *       región dueña del jugador, así que bloquear hasta que la tarea en su
+     *       scheduler termine es la forma correcta de hacer bridging.</li>
+     * </ul>
+     */
+    @Override
+    public <T> T runSyncForPlayerWithResult(String playerName, java.util.function.Supplier<T> task) {
+        if (task == null) return null;
+        if (!folia) {
+            // Clásico: usamos CountDownLatch para garantizar que podemos devolver el resultado.
+            final java.util.concurrent.atomic.AtomicReference<T> ref = new java.util.concurrent.atomic.AtomicReference<>();
+            final java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(1);
+            getServer().getScheduler().runTask(this, () -> {
+                ref.set(task.get());
+                latch.countDown();
+            });
+            try {
+                latch.await();
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                return null;
+            }
+            return ref.get();
+        }
+        org.bukkit.entity.Player p = getServer().getPlayerExact(playerName);
+        if (p == null) {
+            // Jugador offline: el caller asume que ya manejamos el caso; ejecutamos directo.
+            return task.get();
+        }
+        // Folia: usamos entity scheduler vía reflection + CompletableFuture para
+        // esperar el resultado. No podemos bloquear el thread principal pero sí
+        // el thread I/O (nunca es la región del jugador).
+        try {
+            final java.util.concurrent.CompletableFuture<T> fut = new java.util.concurrent.CompletableFuture<>();
+            final Object scheduler = p.getClass().getMethod("getScheduler").invoke(p);
+            final java.lang.reflect.Method runMethod = scheduler.getClass()
+                    .getMethod("run", org.bukkit.plugin.Plugin.class, java.util.function.Consumer.class, Runnable.class);
+            runMethod.invoke(scheduler, this, CANCEL_TASK_SILENTLY, (Runnable) () -> {
+                try {
+                    fut.complete(task.get());
+                } catch (Throwable t) {
+                    fut.completeExceptionally(t);
+                }
+            });
+            return fut.get();
+        } catch (Throwable t) {
+            // Folia scheduler no disponible (versión antigua) — fallback síncrono.
+            return task.get();
+        }
+    }
+
+    @Override
+    public boolean isPlayerOnline(String playerName) {
+        return playerName != null && getServer().getPlayerExact(playerName) != null;
     }
 
     @Override
