@@ -5,6 +5,26 @@ Todos los cambios relevantes del plugin se documentan en este archivo.
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/),
 y este proyecto se adhiere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.4] - 2026-09-04
+
+### Cambiado
+- **URL base de la API configurable.** Movido de constante `private final` a clave
+  `api-url` en config. Hoy un cambio de dominio no obliga a publicar un JAR nuevo:
+  basta con editar `config.yml` (o `40ServidoresMC.conf`) y reiniciar, o `/reload40`.
+  - **Default**: `https://www.40servidoresmc.es/api2.php?clave=` (con `www.`, antes era
+    sin `www.` y disparaba un 301 que añadía un handshake TLS extra).
+  - Cadena vacía en config también cae al default.
+- **`readTimeOut` default subido de 5000 ms a 10000 ms.** El protocolo actual marca el
+  voto como "reclamado" en el servidor antes de que llegue la respuesta al cliente;
+  un timeout corto (5 s) podía consumir el voto sin entregar el premio al jugador.
+  Un timeout más largo reduce ese riesgo sin coste real.
+
+### No se hace
+- **No se añaden reintentos sobre `/api2.php`.** Si la primera llamada ya llegó al
+  servidor, el voto se considera reclamado y un reintento devolvería "ya recompensado"
+  sin entregar premio. La solución adecuada es el protocolo nuevo (pendiente/v3/ack),
+  no un retry ingenuo.
+
 ## [3.0.3] - 2026-09-04
 
 ### Corregido

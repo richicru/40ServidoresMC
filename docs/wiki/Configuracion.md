@@ -14,7 +14,8 @@ broadcast:
 mensaje: '&6Gracias por votarnos! Aqui tienes tu premio: '
 comandosCustom:
 - money add {0} 10
-readTimeOut: 5000
+api-url: https://www.40servidoresmc.es/api2.php?clave=
+readTimeOut: 10000
 cooldown: 60
 update-branch: dev
 log-ip: false
@@ -37,7 +38,8 @@ configVer: 4
 | `broadcast.mensajeBroadcast` | string | (ver arriba) | Mensaje del broadcast. `{0}` se sustituye por el nombre del jugador. |
 | `mensaje` | string | `"&6Gracias..."` | Mensaje que recibe el jugador al canjear el voto. |
 | `comandosCustom` | lista | `["money add {0} 10"]` | Comandos a ejecutar como recompensa. `{0}` = jugador. |
-| `readTimeOut` | int | `5000` | Timeout de lectura HTTP (ms). |
+| `api-url` | string | `"https://www.40servidoresmc.es/api2.php?clave="` | Endpoint de la API. Cambia sólo si la web expone un mirror/dominio distinto. |
+| `readTimeOut` | int | `10000` | Timeout de lectura HTTP (ms). |
 | `cooldown` | int | `60` | Segundos entre validaciones de voto por jugador. |
 | `update-branch` | string | `"dev"` | Rama de GitHub para buscar actualizaciones. |
 | `update-repo` | string | `"richicru/40ServidoresMC"` | Repo de GitHub para buscar actualizaciones. |

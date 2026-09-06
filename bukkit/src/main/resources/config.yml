@@ -6,7 +6,14 @@ broadcast:
 mensaje: '&6Gracias por votarnos! Aqui tienes tu premio: '
 comandosCustom:
 - money add {0} 10
-readTimeOut: 5000
+# URL de la API de 40servidoresmc.es. Por defecto el plugin va directo al
+# host canónico (www.). Override sólo si cambia el dominio o si la web expone
+# un endpoint distinto en algún mirror.
+api-url: https://www.40servidoresmc.es/api2.php?clave=
+# Timeout de lectura HTTP (ms). Subido a 10s por defecto: el protocolo actual
+# marca el voto como "reclamado" en el servidor antes de que llegue la respuesta,
+# y un timeout corto puede consumir el voto sin entregar el premio al jugador.
+readTimeOut: 10000
 cooldown: 60
 update-repo: richicru/40ServidoresMC
 update-branch: dev

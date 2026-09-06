@@ -21,9 +21,11 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Tests de ApiClient con un servidor HTTP local (com.sun.net.httpserver).
- * La URL base de la API está hardcodeada en ApiClient, así que estos tests sirven
- * para validar la lógica de fetchData/parseo y la propagación de errores, no para
- * cambiar la URL. La cobertura principal es el parser de respuestas y manejo de errores.
+ * La URL base de la API es configurable por {@code api-url} en config
+ * (default = www.40servidoresmc.es/api2.php?clave=). Los tests usan un override
+ * de {@link TestableApiClient#getBaseUrl()} para apuntar a un servidor HTTP local.
+ * Cobertura principal: parser de respuestas, propagación de errores,
+ * y la nueva lógica de selección de URL base.
  */
 class TestApiClient {
 
@@ -40,6 +42,8 @@ class TestApiClient {
         plugin.configuration
                 .set("clave", "TESTKEY")
                 .set("readTimeOut", 5000);
+        // api-url: el client de test la ignora porque TestableApiClient override
+        // getBaseUrl(). Tests específicos de api-url usan un cliente real (no-Testable).
 
         client = new TestableApiClient(plugin, new Gson());
     }
@@ -269,6 +273,82 @@ class TestApiClient {
             fail("Tras cerrar el circuito la llamada debe funcionar: " + e.getMessage());
         }
         assertEquals(0, cb.getConsecutiveFailures());
+    }
+
+    // ============================================================
+    //  api-url config: default con www, override por config, fallback si vacío
+    // ============================================================
+
+    /**
+     * Helper: cliente real (no-Testable) que respeta la selección de URL base
+     * desde config. Necesario porque TestableApiClient overridea getBaseUrl().
+     */
+    private static class RealApiClient extends com.cadiducho.cservidoresmc.ApiClient {
+        RealApiClient(com.cadiducho.cservidoresmc.api.CSPlugin plugin, Gson gson) {
+            super(plugin, gson);
+        }
+        String capturedBaseUrl;
+
+        @Override
+        protected String getBaseUrl() {
+            String u = super.getBaseUrl();
+            capturedBaseUrl = u;
+            return u;
+        }
+    }
+
+    @Test
+    void apiUrlDefaultsToWwwHost() {
+        plugin.configuration.set("api-url", null); // valor explícitamente null
+        RealApiClient c = new RealApiClient(plugin, new Gson());
+        String url = c.getBaseUrl();
+        assertTrue(url.startsWith("https://www.40servidoresmc.es/"),
+                "Default debe apuntar al host canónico (www.), fue: " + url);
+        assertTrue(url.contains("/api2.php?clave="),
+                "Default debe contener '/api2.php?clave=', fue: " + url);
+    }
+
+    @Test
+    void apiUrlHonorsConfigOverride() {
+        plugin.configuration.set("api-url", "https://custom.example.org/vote/api.php?clave=");
+        RealApiClient c = new RealApiClient(plugin, new Gson());
+        assertEquals("https://custom.example.org/vote/api.php?clave=", c.getBaseUrl());
+    }
+
+    @Test
+    void apiUrlFallsBackOnEmptyString() {
+        plugin.configuration.set("api-url", ""); // el usuario borró el valor por error
+        RealApiClient c = new RealApiClient(plugin, new Gson());
+        assertTrue(c.getBaseUrl().startsWith("https://www.40servidoresmc.es/"),
+                "Cadena vacía debe caer al default (www.), fue: " + c.getBaseUrl());
+    }
+
+    @Test
+    void apiUrlReadOnEveryFetch_soReloadTakesEffect() {
+        // RealApiClient captura la URL cada vez que se llama getBaseUrl() (que es
+        // exactamente lo que pasa cuando fetchData() se llama varias veces).
+        plugin.configuration.set("api-url", "https://host-a.example/?clave=");
+        RealApiClient c = new RealApiClient(plugin, new Gson());
+        assertEquals("https://host-a.example/?clave=", c.getBaseUrl());
+        assertEquals("https://host-a.example/?clave=", c.capturedBaseUrl,
+                "RealApiClient captura la URL cada vez");
+
+        // Simulamos /reload40 — el usuario cambia api-url.
+        plugin.configuration.set("api-url", "https://host-b.example/?clave=");
+        assertEquals("https://host-b.example/?clave=", c.getBaseUrl(),
+                "El cambio en config debe verse inmediatamente sin reiniciar el plugin");
+    }
+
+    @Test
+    void apiUrlIsAppendedWithKeyAndParams() {
+        // Esto verifica el formato final de la URL que el server verá.
+        // Aunque el path exacto puede cambiar (un endpoint distinto), la URL debe:
+        //   - terminar con /<algo>?clave=
+        //   - estar en HTTPS
+        String url = ApiClient.DEFAULT_API_URL;
+        assertTrue(url.startsWith("https://"), "Debe ser HTTPS: " + url);
+        assertTrue(url.endsWith("/api2.php?clave="),
+                "Debe terminar con '/api2.php?clave=' (clave se concatena después): " + url);
     }
 
     /**

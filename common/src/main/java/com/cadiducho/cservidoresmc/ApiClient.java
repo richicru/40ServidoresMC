@@ -22,7 +22,14 @@ public class ApiClient {
     private static final int CONNECT_TIMEOUT_MS = 5000;
     private static final int DEFAULT_IO_THREADS = 2;
 
-    private final String API_URL = "https://40servidoresmc.es/api2.php?clave=";
+    /**
+     * URL por defecto de la API. Antes era {@code https://40servidoresmc.es/api2.php?clave=}
+     * (sin www) pero el apex respondía 301 hacia {@code www.40servidoresmc.es} y eso añadía
+     * un segundo handshake TLS por cada validación. Hoy por defecto vamos directos al host
+     * canónico ({@code www.}). Sigue siendo override-able vía {@code api-url} en config.
+     */
+    static final String DEFAULT_API_URL = "https://www.40servidoresmc.es/api2.php?clave=";
+
     private final CSPlugin plugin;
     private final Gson gson;
     private final ExecutorService ioExecutor;
@@ -59,8 +66,20 @@ public class ApiClient {
         return plugin.getCSConfiguration().getInt("readTimeOut");
     }
 
+    /**
+     * URL base de la API, configurable vía {@code api-url} en config.
+     * Si la clave falta o el valor queda vacío, se cae al default canónico
+     * ({@code https://www.40servidoresmc.es/api2.php?clave=}).
+     *
+     * <p>Se lee en cada fetch — no se cachea — para que un {@code /reload40}
+     * surta efecto inmediato sobre la URL sin reiniciar el servidor.</p>
+     */
     protected String getBaseUrl() {
-        return API_URL;
+        String url = plugin.getCSConfiguration().getString("api-url", DEFAULT_API_URL);
+        if (url == null || url.isEmpty()) {
+            return DEFAULT_API_URL;
+        }
+        return url;
     }
 
     public CircuitBreaker getCircuitBreaker() {
