@@ -15,3 +15,5 @@
 /docker-compose.test.yml
 /scripts/*.log
 /.opencode-cache/
+mock-logs/
+

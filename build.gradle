@@ -2,7 +2,7 @@ subprojects {
     apply plugin: 'java'
 
     group = 'com.cadiducho'
-    version = '3.0.4'
+    version = '3.0.5'
     description = '40ServidoresMC'
 
     sourceCompatibility = 1.8

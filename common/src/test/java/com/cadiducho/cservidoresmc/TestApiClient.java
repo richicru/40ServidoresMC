@@ -1,6 +1,7 @@
 package com.cadiducho.cservidoresmc;
 
 import com.cadiducho.cservidoresmc.TestSupport.MockPlugin;
+import com.cadiducho.cservidoresmc.cmd.VoteCMD;
 import com.cadiducho.cservidoresmc.model.ServerStats;
 import com.cadiducho.cservidoresmc.model.VoteResponse;
 import com.cadiducho.cservidoresmc.model.VoteStatus;
@@ -276,22 +277,165 @@ class TestApiClient {
     }
 
     // ============================================================
+    //  CircuitOpenException: cuando el circuito está abierto, fetchData
+    //  lanza CircuitOpenException (RuntimeException) con el retryAfterMs, NO
+    //  un IOException genérico.
+    // ============================================================
+    @Test
+    void fetchDataThrowsCircuitOpenException_whenCircuitIsOpen() throws Exception {
+        // Cliente con circuit breaker explícito: 1 fallo → abre con 60s de backoff
+        CircuitBreaker cb = new CircuitBreaker(1, 60_000L, 120_000L);
+        cb.recordFailure();
+        assertTrue(cb.isOpen());
+
+        // Mock-server que no debería recibir NADA (porque el circuito está abierto)
+        java.util.concurrent.atomic.AtomicInteger hits = new java.util.concurrent.atomic.AtomicInteger();
+        server.createContext("/cb/open", exchange -> {
+            hits.incrementAndGet();
+            String body = "{\"web\":\"\",\"status\":\"1\"}";
+            byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, bytes.length);
+            exchange.getResponseBody().write(bytes);
+            exchange.close();
+        });
+        RealApiClient openClient = new RealApiClient(plugin, new Gson(),
+                java.util.concurrent.Executors.newSingleThreadExecutor(), cb);
+        openClient.setTestBaseUrl("http://127.0.0.1:" + server.getAddress().getPort() + "/cb/open?clave=");
+
+        ExecutionException ex = assertThrows(ExecutionException.class,
+                () -> openClient.validateVote("u").get(2, TimeUnit.SECONDS));
+        // La excepción de la CompletableFuture es una CompletionException envolviendo
+        // IllegalStateException que envuelve la CircuitOpenException. El caller usa
+        // unwrapRootCause para llegar al fondo.
+        Throwable root = VoteCMD.unwrapRootCause(ex);
+        assertTrue(root instanceof CircuitBreaker.CircuitOpenException,
+                "El root cause debe ser CircuitOpenException, fue: " + root.getClass().getName());
+        assertTrue(((CircuitBreaker.CircuitOpenException) root).getRetryAfterMs() > 0);
+        assertEquals(0, hits.get(),
+                "El mock no debe haber recibido NINGUNA petición (el circuito impidió la llamada)");
+    }
+
+    // ============================================================
+    //  RateLimitedException: un HTTP 429 con Retry-After se traduce a
+    //  RateLimitedException, y NO alimenta el circuit breaker.
+    // ============================================================
+    @Test
+    void fetchDataThrowsRateLimitedException_on429_andDoesNotFeedCircuitBreaker() throws Exception {
+        CircuitBreaker cb = new CircuitBreaker(3, 1_000L, 5_000L);
+        RealApiClient limitedClient = new RealApiClient(plugin, new Gson(),
+                java.util.concurrent.Executors.newSingleThreadExecutor(), cb);
+
+        server.createContext("/test/429", exchange -> {
+            exchange.getResponseHeaders().add("Retry-After", "37");
+            exchange.sendResponseHeaders(429, -1);
+            exchange.close();
+        });
+        limitedClient.setTestBaseUrl("http://127.0.0.1:" + server.getAddress().getPort() + "/test/429?clave=");
+
+        // Hacer 5 llamadas que devuelven 429
+        for (int i = 0; i < 5; i++) {
+            try {
+                limitedClient.validateVote("u").get(2, TimeUnit.SECONDS);
+                fail("La llamada #" + (i+1) + " debería haber lanzado RateLimitedException");
+            } catch (ExecutionException ignored) {
+                // esperado
+            }
+        }
+        // CRÍTICO: el circuit breaker NO debe estar abierto tras 5 calls fallidas
+        // con 429, porque un 429 NO es "la API está caída".
+        assertEquals(0, cb.getConsecutiveFailures(),
+                "429 NO debe alimentar el circuit breaker. consecutiveFailures=" + cb.getConsecutiveFailures());
+        assertFalse(cb.isOpen(),
+                "El circuito debe seguir cerrado tras 5 x 429 (no es señal de API caída)");
+
+        // Y la última excepción debe haber sido RateLimitedException con retryAfter=37s
+        // (verificamos el último error haciendo otra llamada y mirando el tipo)
+        try {
+            limitedClient.validateVote("u2").get(2, TimeUnit.SECONDS);
+            fail("Debió lanzar excepción");
+        } catch (ExecutionException e) {
+            Throwable root = VoteCMD.unwrapRootCause(e);
+            assertTrue(root instanceof RateLimitedException,
+                    "Root cause debe ser RateLimitedException, fue: " + root.getClass().getName());
+            RateLimitedException rle = (RateLimitedException) root;
+            assertEquals(37_000L, rle.getRetryAfterMs(),
+                    "Retry-After: 37 segundos, fue: " + rle.getRetryAfterMs());
+        }
+    }
+
+    @Test
+    void parseRetryAfterFallsBackOnMissingHeader() throws Exception {
+        server.createContext("/test/no429hdr", exchange -> {
+            // 429 sin Retry-After
+            exchange.sendResponseHeaders(429, -1);
+            exchange.close();
+        });
+        CircuitBreaker cb = new CircuitBreaker(3, 1_000L, 5_000L);
+        RealApiClient limitedClient = new RealApiClient(plugin, new Gson(),
+                java.util.concurrent.Executors.newSingleThreadExecutor(), cb);
+        limitedClient.setTestBaseUrl("http://127.0.0.1:" + server.getAddress().getPort() + "/test/no429hdr?clave=");
+
+        try {
+            limitedClient.validateVote("u").get(2, TimeUnit.SECONDS);
+            fail("Debió lanzar RateLimitedException");
+        } catch (ExecutionException e) {
+            Throwable root = VoteCMD.unwrapRootCause(e);
+            assertTrue(root instanceof RateLimitedException);
+            // Si no hay Retry-After, debe caer al fallback de 5000ms.
+            assertEquals(5_000L, ((RateLimitedException) root).getRetryAfterMs());
+        }
+    }
+
+    @Test
+    void parseRetryAfterHandlesInvalidHeaderGracefully() throws Exception {
+        server.createContext("/test/bad429hdr", exchange -> {
+            exchange.getResponseHeaders().add("Retry-After", "not-a-number");
+            exchange.sendResponseHeaders(429, -1);
+            exchange.close();
+        });
+        CircuitBreaker cb = new CircuitBreaker(3, 1_000L, 5_000L);
+        RealApiClient limitedClient = new RealApiClient(plugin, new Gson(),
+                java.util.concurrent.Executors.newSingleThreadExecutor(), cb);
+        limitedClient.setTestBaseUrl("http://127.0.0.1:" + server.getAddress().getPort() + "/test/bad429hdr?clave=");
+
+        try {
+            limitedClient.validateVote("u").get(2, TimeUnit.SECONDS);
+            fail("Debió lanzar RateLimitedException");
+        } catch (ExecutionException e) {
+            Throwable root = VoteCMD.unwrapRootCause(e);
+            assertTrue(root instanceof RateLimitedException);
+            // Header inválido → fallback a 5000ms.
+            assertEquals(5_000L, ((RateLimitedException) root).getRetryAfterMs());
+        }
+    }
+
+    // ============================================================
     //  api-url config: default con www, override por config, fallback si vacío
     // ============================================================
 
     /**
      * Helper: cliente real (no-Testable) que respeta la selección de URL base
      * desde config. Necesario porque TestableApiClient overridea getBaseUrl().
+     * Permite también fijar una URL de test con setTestBaseUrl().
      */
     private static class RealApiClient extends com.cadiducho.cservidoresmc.ApiClient {
         RealApiClient(com.cadiducho.cservidoresmc.api.CSPlugin plugin, Gson gson) {
             super(plugin, gson);
         }
+        RealApiClient(com.cadiducho.cservidoresmc.api.CSPlugin plugin, Gson gson,
+                       java.util.concurrent.ExecutorService exec, CircuitBreaker cb) {
+            super(plugin, gson, exec, cb);
+        }
         String capturedBaseUrl;
+        private String testBaseUrl;
+
+        void setTestBaseUrl(String url) {
+            this.testBaseUrl = url;
+        }
 
         @Override
         protected String getBaseUrl() {
-            String u = super.getBaseUrl();
+            String u = (testBaseUrl != null) ? testBaseUrl : super.getBaseUrl();
             capturedBaseUrl = u;
             return u;
         }

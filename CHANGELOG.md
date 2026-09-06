@@ -5,6 +5,53 @@ Todos los cambios relevantes del plugin se documentan en este archivo.
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/),
 y este proyecto se adhiere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.5] - 2026-09-04
+
+### Corregido (diagnóstico)
+- **`VoteCMD` / `StatsCMD` no registraban la causa real del error.** El wrapper
+  `IllegalStateException("Cannot execute API call", e)` se logueaba como
+  `e.getMessage()` (que es siempre "Cannot execute API call"), perdiendo la
+  causa raíz (java.net.SocketTimeoutException, FileNotFoundException, etc.).
+  Hoy un reporte del dueño distingue inmediatamente "DNS caído" de "timeout"
+  de "el plugin asume que la API está caída".
+  - Fix: nuevo helper `VoteCMD.unwrapRootCause(e)` que recorre la cadena de
+    causas (con detección de bucles). En los handlers de error de /voto40
+    y /stats40, registramos `root.getClass().getName() + ": " + root.getMessage()`
+    en consola, no el genérico.
+
+### Cambiado (mensajes al jugador)
+- **`CircuitBreaker.CircuitOpenException` ahora se lanza y se trata aparte.**
+  Antes `fetchData()` lanzaba un `IOException("Circuit breaker open ...")`
+  genérico y el jugador recibía el mismo mensaje que ante cualquier otro
+  error (indistinguible de "la API está caída").
+  - `fetchData` ahora lanza la excepción propia del circuit breaker con
+    `retryAfterMs`.
+  - El jugador recibe `&eReintentando en {seconds}s. Tu voto no se ha perdido.`
+  - En el log del servidor: `Voto saltado: circuit breaker abierto, reintento en Ns.`
+
+- **HTTP 429 NO alimenta el circuit breaker.** Antes tres 429 seguidos
+  abrían el circuito (con backoff de 5 s), igual que ante un fallo de red.
+  - Nuevo: clase `RateLimitedException` (RuntimeException). Cuando la API
+    devuelve 429 con cabecera `Retry-After`, el plugin la respeta y
+    muestra `&eAPI saturada (límite 20/min). Reintenta en {seconds}s.`
+  - El circuit breaker sólo se abre ante fallos de red / 5xx genuinos.
+  - `parseRetryAfter` soporta el formato entero (RFC 7231 §7.1.3) y cae
+    a 5 s de fallback si la cabecera falta o es inválida.
+
+### Añadido
+- Nuevas claves `MessageKey` (con defaults ES): `VOTE_CIRCUIT_OPEN`,
+  `VOTE_RATE_LIMITED`, `STATS_CIRCUIT_OPEN`, `STATS_RATE_LIMITED`.
+  Override vía `messages.*` en config (igual que el resto del catálogo).
+- Nuevo escenario en `scripts/test-vote-scenarios.sh` para 429 y circuit
+  breaker, validado en mock-api.
+- Mock API añade endpoints `/__admin/rate_limit?seconds=N&retry_after=N`
+  y `/__admin/circuit_open?seconds=N` para forzar respuestas en tests.
+
+### No se hace
+- No se reintenta automáticamente tras un 429 (la API ya marca el voto como
+  reclamado y un reintento devolvería `status=2` sin recompensa). El plugin
+  sólo informa al jugador del tiempo de espera.
+
 ## [3.0.4] - 2026-09-04
 
 ### Cambiado

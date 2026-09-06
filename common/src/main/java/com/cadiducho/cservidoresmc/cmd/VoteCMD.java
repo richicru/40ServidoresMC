@@ -1,7 +1,9 @@
 package com.cadiducho.cservidoresmc.cmd;
 
+import com.cadiducho.cservidoresmc.CircuitBreaker;
 import com.cadiducho.cservidoresmc.Cooldown;
 import com.cadiducho.cservidoresmc.MessageKey;
+import com.cadiducho.cservidoresmc.RateLimitedException;
 import com.cadiducho.cservidoresmc.api.CSCommandSender;
 import com.cadiducho.cservidoresmc.api.CSPlugin;
 import com.cadiducho.cservidoresmc.model.VoteResponse;
@@ -48,10 +50,7 @@ public class VoteCMD extends CSCommand {
         plugin.getApiClient().validateVote(sender.getName()).thenAccept((VoteResponse voteResponse) -> {
             plugin.runSyncForPlayer(sender.getName(), () -> handleVoteResponse(plugin, sender, voteResponse));
         }).exceptionally(e -> {
-            plugin.runSyncForPlayer(sender.getName(), () -> {
-                sender.sendMessageWithTag(MessageKey.VOTE_EXCEPTION.resolve(plugin.getCSConfiguration()));
-                plugin.logError("Excepción intentando votar: " + e.getMessage());
-            });
+            plugin.runSyncForPlayer(sender.getName(), () -> handleVoteError(plugin, sender, e));
             return null;
         });
 
@@ -98,5 +97,58 @@ public class VoteCMD extends CSCommand {
                 sender.sendMessageWithTag(MessageKey.VOTE_ERROR.resolve(plugin.getCSConfiguration()));
                 break;
         }
+    }
+
+    /**
+     * Recorre la cadena de causas de una excepción y devuelve la raíz, sin
+     * envoltorios tipo {@code CompletionException} / {@code IllegalStateException}.
+     * Si la cadena tiene bucles (cada causa apunta a la siguiente), corta en el
+     * primer nivel.
+     */
+    public static Throwable unwrapRootCause(Throwable e) {
+        Throwable cur = e;
+        java.util.IdentityHashMap<Throwable, Boolean> seen = new java.util.IdentityHashMap<>();
+        while (cur != null && cur.getCause() != null && cur.getCause() != cur && !seen.containsKey(cur.getCause())) {
+            seen.put(cur, Boolean.TRUE);
+            cur = cur.getCause();
+        }
+        return cur == null ? e : cur;
+    }
+
+    /**
+     * Manejo diferenciado de excepciones en /voto40. Distinguimos tres casos:
+     * <ul>
+     *   <li>{@link CircuitBreaker.CircuitOpenException}: el plugin no llegó a llamar
+     *       a la API porque el circuito estaba abierto. Mensaje al jugador con el
+     *       tiempo de reintento; el voto no se ha perdido.</li>
+     *   <li>{@link RateLimitedException}: la API devolvió 429. Mensaje con el Retry-After
+     *       de la cabecera HTTP.</li>
+     *   <li>Cualquier otra excepción: walk hasta el root cause y registramos en
+     *       consola con el nombre de la clase (no solo el mensaje) para que un
+     *       reporte del dueño sea útil.</li>
+     * </ul>
+     */
+    private void handleVoteError(CSPlugin plugin, CSCommandSender sender, Throwable e) {
+        Throwable root = unwrapRootCause(e);
+        if (root instanceof CircuitBreaker.CircuitOpenException) {
+            long seconds = ((CircuitBreaker.CircuitOpenException) root).getRetryAfterMs() / 1000L;
+            sender.sendMessageWithTag(MessageKey.VOTE_CIRCUIT_OPEN.resolve(
+                    plugin.getCSConfiguration(), "seconds", String.valueOf(seconds)));
+            plugin.logError("Voto saltado: circuit breaker abierto, reintento en " + seconds + "s.");
+            return;
+        }
+        if (root instanceof RateLimitedException) {
+            long seconds = ((RateLimitedException) root).getRetryAfterSeconds();
+            sender.sendMessageWithTag(MessageKey.VOTE_RATE_LIMITED.resolve(
+                    plugin.getCSConfiguration(), "seconds", String.valueOf(seconds)));
+            plugin.logError("Voto rechazado: API devolvió 429 (rate limited), reintento en " + seconds + "s.");
+            return;
+        }
+        // Camino genérico: el mensaje de root.toString() lleva "ClaseEx: mensaje",
+        // a diferencia de e.getMessage() que en IllegalStateException es solo
+        // "Cannot execute API call".
+        sender.sendMessageWithTag(MessageKey.VOTE_EXCEPTION.resolve(plugin.getCSConfiguration()));
+        plugin.logError("Excepción intentando votar: " + root.getClass().getName()
+                + ": " + root.getMessage());
     }
 }

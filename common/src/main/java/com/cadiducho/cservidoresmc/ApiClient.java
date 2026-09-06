@@ -117,8 +117,11 @@ public class ApiClient {
      */
     private <T> T fetchData(String params, String method, Class<T> type) throws IOException {
         if (!circuitBreaker.canExecute()) {
+            // Lanzamos la excepción propia para que el caller (VoteCMD/StatsCMD)
+            // pueda distinguir "el circuito está abierto, no he llamado" de "la
+            // llamada falló de verdad" y mostrar un mensaje adecuado al jugador.
             long retryMs = circuitBreaker.backoffRemainingMs();
-            throw new IOException("Circuit breaker open (backoff " + retryMs + " ms): aborting API call");
+            throw new CircuitBreaker.CircuitOpenException(retryMs);
         }
 
         URL url = new URL(getBaseUrl() + apiKey() + params);
@@ -133,6 +136,16 @@ public class ApiClient {
         int status;
         try {
             status = connection.getResponseCode();
+
+            // 429 Too Many Requests: la API nos está pidiendo que bajemos el ritmo.
+            // No alimentamos el circuit breaker (no es "la API está caída") y
+            // respetamos Retry-After para informar al jugador del tiempo de espera.
+            if (status == 429) {
+                long retryMs = parseRetryAfter(connection, 5000L);
+                connection.disconnect();
+                throw new RateLimitedException(retryMs);
+            }
+
             InputStream stream = (status >= 200 && status < 300)
                     ? connection.getInputStream()
                     : connection.getErrorStream();
@@ -165,6 +178,31 @@ public class ApiClient {
             }
         } finally {
             connection.disconnect();
+        }
+    }
+
+    /**
+     * Lee la cabecera Retry-After de la respuesta HTTP y devuelve el valor en
+     * milisegundos. Si la cabecera falta o es inválida, devuelve el fallback.
+     *
+     * <p>Retry-After admite dos formatos según RFC 7231:
+     * <ul>
+     *   <li>Entero: número de segundos (p. ej. "30").</li>
+     *   <li>HTTP-date: fecha exacta de reintento (raro en APIs JSON).</li>
+     * </ul>
+     * Sólo soportamos el formato entero.</p>
+     */
+    private static long parseRetryAfter(HttpURLConnection connection, long fallbackMs) {
+        String header = connection.getHeaderField("Retry-After");
+        if (header == null || header.isEmpty()) {
+            return fallbackMs;
+        }
+        try {
+            long seconds = Long.parseLong(header.trim());
+            if (seconds < 0) return fallbackMs;
+            return seconds * 1000L;
+        } catch (NumberFormatException nfe) {
+            return fallbackMs;
         }
     }
 

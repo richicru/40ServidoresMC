@@ -1,6 +1,8 @@
 package com.cadiducho.cservidoresmc.cmd;
 
+import com.cadiducho.cservidoresmc.CircuitBreaker;
 import com.cadiducho.cservidoresmc.MessageKey;
+import com.cadiducho.cservidoresmc.RateLimitedException;
 import com.cadiducho.cservidoresmc.StatsCache;
 import com.cadiducho.cservidoresmc.api.CSCommandSender;
 import com.cadiducho.cservidoresmc.api.CSPlugin;
@@ -34,13 +36,35 @@ public class StatsCMD extends CSCommand {
             // que enruta correctamente al thread principal incluso en Folia.
             plugin.runSyncGlobal(() -> handleStatsResponse(plugin, sender, serverStats));
         }).exceptionally(ex -> {
-            plugin.runSyncGlobal(() -> {
-                sender.sendMessageWithTag(MessageKey.STATS_EXCEPTION.resolve(plugin.getCSConfiguration()));
-                plugin.logError("Excepción obteniendo estadisticas: " + ex.getMessage());
-            });
+            plugin.runSyncGlobal(() -> handleStatsError(plugin, sender, ex));
             return null;
         });
         return CommandResult.SUCCESS;
+    }
+
+    /**
+     * Manejo diferenciado, mismo patrón que {@link VoteCMD}:
+     * CircuitOpenException, RateLimitedException y root-cause walking.
+     */
+    private void handleStatsError(CSPlugin plugin, CSCommandSender sender, Throwable e) {
+        Throwable root = VoteCMD.unwrapRootCause(e);
+        if (root instanceof CircuitBreaker.CircuitOpenException) {
+            long seconds = ((CircuitBreaker.CircuitOpenException) root).getRetryAfterMs() / 1000L;
+            sender.sendMessageWithTag(MessageKey.STATS_CIRCUIT_OPEN.resolve(
+                    plugin.getCSConfiguration(), "seconds", String.valueOf(seconds)));
+            plugin.logError("Stats saltado: circuit breaker abierto, reintento en " + seconds + "s.");
+            return;
+        }
+        if (root instanceof RateLimitedException) {
+            long seconds = ((RateLimitedException) root).getRetryAfterSeconds();
+            sender.sendMessageWithTag(MessageKey.STATS_RATE_LIMITED.resolve(
+                    plugin.getCSConfiguration(), "seconds", String.valueOf(seconds)));
+            plugin.logError("Stats rechazado: API devolvió 429, reintento en " + seconds + "s.");
+            return;
+        }
+        sender.sendMessageWithTag(MessageKey.STATS_EXCEPTION.resolve(plugin.getCSConfiguration()));
+        plugin.logError("Excepción obteniendo estadisticas: " + root.getClass().getName()
+                + ": " + root.getMessage());
     }
 
     private void handleStatsResponse(CSPlugin plugin, CSCommandSender sender, ServerStats serverStats) {

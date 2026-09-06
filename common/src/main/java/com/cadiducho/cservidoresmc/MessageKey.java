@@ -18,6 +18,8 @@ public enum MessageKey {
     VOTE_INVALID_KEY("vote-invalid-key", "&cClave incorrecta. Entra en &bhttps://40servidoresmc.es/miservidor.php &cy cambia esta."),
     VOTE_ERROR("vote-error", "&7Ha ocurrido un error. Prueba más tarde o avisa a un administrador"),
     VOTE_EXCEPTION("vote-exception", "&cHa ocurrido una excepción. Avisa a un administrador"),
+    VOTE_CIRCUIT_OPEN("vote-circuit-open", "&eReintentando en {seconds}s. Tu voto no se ha perdido."),
+    VOTE_RATE_LIMITED("vote-rate-limited", "&eAPI saturada (límite 20/min). Reintenta en {seconds}s."),
 
     STATS_INVALID_KEY("stats-invalid-key", "&cClave incorrecta. Entra en &bhttps://40servidoresmc.es/miservidor.php &cy cambia esta."),
     STATS_HEADER("stats-header", "&9==> &7{server} &festá en el TOP &a{position}"),
@@ -27,6 +29,8 @@ public enum MessageKey {
     STATS_WEEK_VOTES_REWARDED("stats-week-votes-rewarded", "&bVotos premiados semanales: &6{count}"),
     STATS_LAST_VOTES("stats-last-votes", "&bÚltimos 20 votos: {votes}"),
     STATS_EXCEPTION("stats-exception", "&cHa ocurrido una excepción. Revisa la consola o avisa a un administrador"),
+    STATS_CIRCUIT_OPEN("stats-circuit-open", "&eReintentando en {seconds}s."),
+    STATS_RATE_LIMITED("stats-rate-limited", "&eAPI saturada (límite 20/min). Reintenta en {seconds}s."),
 
     CMD_NO_PERMISSION("cmd-no-permission", "&cNo tienes permiso para usar este comando"),
     CMD_COOLDOWN("cmd-cooldown", "&6No puedes ejecutar este comando tantas veces seguidas!"),
