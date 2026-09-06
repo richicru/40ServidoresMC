@@ -6,6 +6,7 @@ import com.cadiducho.cservidoresmc.model.AckResponse;
 import com.cadiducho.cservidoresmc.model.PendingVotesResponse;
 import com.cadiducho.cservidoresmc.model.ServerStats;
 import com.cadiducho.cservidoresmc.model.VoteResponse;
+import com.cadiducho.cservidoresmc.util.PendingAckStore;
 import com.google.gson.Gson;
 
 import java.io.IOException;
@@ -43,6 +44,7 @@ public class ApiClient {
     private final Gson gson;
     private final ExecutorService ioExecutor;
     private final CircuitBreaker circuitBreaker;
+    private final PendingAckStore pendingAcks = new PendingAckStore();
 
     public ApiClient(CSPlugin plugin, Gson gson) {
         this(plugin, gson, defaultIoExecutor(), CircuitBreaker.defaults());
@@ -125,9 +127,7 @@ public class ApiClient {
         return CompletableFuture.supplyAsync(() -> {
             try {
                 // stats usa el endpoint legacy /api2.php (no hay equivalente v3).
-                // Si api-url es la bare base (uso v3), añadimos /api2.php?clave=;
-                // si ya termina en /api2.php?clave= (uso v2 legacy), usamos como está.
-                String v2Url = getApiBase() + "/api2.php?clave=" + apiKey() + "&estadisticas=1";
+                String v2Url = v2StatsUrl();
                 return executeRequest(v2Url, "GET", null, null, ServerStats.class);
             } catch (IOException e) {
                 throw new IllegalStateException("Cannot execute API call", e);
@@ -136,12 +136,35 @@ public class ApiClient {
     }
 
     /**
+     * Construye la URL del endpoint legacy /api2.php?clave= para stats.
+     * Si {@code api-url} ya termina en {@code /api2.php?clave=} (formato legacy),
+     * añadimos stats al final. Si es la bare base, añadimos el path y la clave.
+     */
+    private String v2StatsUrl() {
+        String base = getBaseUrl();
+        if (base.endsWith("?clave=") || base.endsWith("?clave")) {
+            // legacy v2 url con placeholder ?clave=; añadimos los params de stats
+            return base + apiKey() + "&estadisticas=1";
+        }
+        // bare base — añadimos el path legacy y la clave
+        return getApiBase() + "/api2.php?clave=" + apiKey() + "&estadisticas=1";
+    }
+
+    /**
      * v2 — ejecuta la llamada legacy a /api2.php?clave=X con clave en query string.
      * Usado por validateVote (legacy) si algún admin sigue con la versión vieja
      * y por fetchServerStats (no hay endpoint v3 de stats).
      */
     private <T> T fetchData(String params, String method, Class<T> type) throws IOException {
-        String v2Url = getApiBase() + "/api2.php?clave=" + apiKey() + params;
+        String base = getBaseUrl();
+        String v2Url;
+        if (base.endsWith("?clave=") || base.endsWith("?clave")) {
+            // legacy v2 url con placeholder ?clave=; añadimos apiKey() + params
+            v2Url = base + apiKey() + params;
+        } else {
+            // bare base — añadimos el path legacy y la clave
+            v2Url = getApiBase() + "/api2.php?clave=" + apiKey() + params;
+        }
         return executeRequest(v2Url, method, null, null, type);
     }
 
@@ -170,13 +193,15 @@ public class ApiClient {
      *
      * @param delivered true si la entrega del premio fue exitosa, false si algo
      *                  falló y queremos liberar la reserva al instante.
-     * @param userIpHash SHA-256 del {@code getPlayerIp()} del jugador, o "" si
-     *                   la IP no estaba disponible.
+     * @param userIp    IP en claro (sin hashear) — el server la cruza con la IP
+     *                  que el usuario dejó al votar en la web. Si el server está
+     *                  detrás de un proxy sin ip-forward, el caller debe pasar ""
+     *                  (no tiene sentido mandarle la IP del proxy para todos).
      */
     public CompletableFuture<AckResponse> sendAck(List<Long> voteIds, String nick,
-                                                 boolean delivered, String userIpHash) {
+                                                 boolean delivered, String userIp) {
         AckRequest payload = new AckRequest(voteIds, delivered, nick,
-                (userIpHash == null) ? "" : userIpHash);
+                (userIp == null) ? "" : userIp);
         return CompletableFuture.supplyAsync(() -> {
             try {
                 String body = gson.toJson(payload);
@@ -186,6 +211,50 @@ public class ApiClient {
                 throw new IllegalStateException("Cannot execute V3 ack API call", e);
             }
         }, ioExecutor);
+    }
+
+    // ============================================================
+    //  Retry de acks fallidos
+    // ============================================================
+
+    /**
+     * Registra ids cuya entrega tuvo éxito pero cuyo ack al server falló.
+     * Se reintentará en el próximo {@code /voto40} del mismo jugador.
+     */
+    public void addPendingAck(String nick, List<Long> voteIds) {
+        pendingAcks.add(nick, voteIds);
+    }
+
+    /**
+     * @return ids pendientes para este nick sin consumirlos.
+     */
+    public List<Long> peekPendingAcks(String nick) {
+        return pendingAcks.peek(nick);
+    }
+
+    /**
+     * Saca los ids pendientes y los manda como ack con {@code delivered:true}.
+     * Si la llamada tiene éxito, los ids se eliminan del store. Si falla
+     * (timeout, red caída, 4xx/5xx), vuelven al store para el próximo intento.
+     *
+     * <p>Fire-and-forget: devuelve un {@code CompletableFuture} para que el caller
+     * pueda encadenar, pero no debe esperar a que termine antes de procesar el
+     * pending normal. Si hay ids pendientes, los manda primero; si no, retorna
+     * un futuro ya completado.</p>
+     */
+    public CompletableFuture<AckResponse> retryPendingAcks(String nick) {
+        List<Long> ids = pendingAcks.take(nick);
+        if (ids.isEmpty()) {
+            return CompletableFuture.completedFuture(null);
+        }
+        return sendAck(ids, nick, true, "").handle((ack, err) -> {
+            if (err != null || ack == null) {
+                // Falló: los ids vuelven al store para el próximo /voto40.
+                pendingAcks.add(nick, ids);
+            }
+            // Si tuvo éxito, sendAck ya hizo su trabajo y no hace falta re-almacenar.
+            return ack;
+        });
     }
 
     // ============================================================

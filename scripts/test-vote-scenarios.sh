@@ -84,14 +84,15 @@ scenario_v3_pending_with_votes() {
   reset_mock
   # success-alice devuelve 1 voto pendiente. En el mock, vemos:
   local pending
-  pending=$(curl -s "$MOCK_URL/api/vote/v3/pending?nick=success-alice")
+  pending=$(curl -s "$MOCK_URL/api/vote/v3/pending?nick=success-alice" \
+              -H "Authorization: Bearer TESTKEY")
   if echo "$pending" | grep -q '"votos_pendientes"'; then
     ok "Mock responde con campo 'votos_pendientes' (snake_case → camelCase via @SerializedName)"
   else
     ko "Mock no devolvió el JSON esperado: $pending"
   fi
-  if echo "$pending" | grep -q '"puede_votar_ya": true'; then
-    ok "Mock incluye 'puede_votar_ya' en camelCase"
+  if echo "$pending" | grep -q '"puede_votar_ya": false'; then
+    ok "Mock incluye 'puede_votar_ya=false' (con los bytes reales MuestraV3Jugador)"
   else
     ko "Falta 'puede_votar_ya'"
   fi
@@ -100,13 +101,19 @@ scenario_v3_pending_with_votes() {
   else
     ko "Falta api_version"
   fi
+  if echo "$pending" | grep -q '"jugador": "MuestraV3Jugador"'; then
+    ok "Mock produce los bytes REALES del endpoint (MuestraV3Jugador, id 254411)"
+  else
+    ko "Mock no usa los bytes reales"
+  fi
 }
 
 scenario_v3_pending_empty_can_vote() {
   hdr "Scenario v3: pending vacío, puede_votar_ya=true → 'vota en la web'"
   reset_mock
   local pending
-  pending=$(curl -s "$MOCK_URL/api/vote/v3/pending?nick=notvoted-bob")
+  pending=$(curl -s "$MOCK_URL/api/vote/v3/pending?nick=notvoted-bob" \
+              -H "Authorization: Bearer TESTKEY")
   if echo "$pending" | grep -q '"votos_pendientes": \[\]'; then
     ok "Lista de votos pendientes está vacía"
   else
@@ -123,7 +130,8 @@ scenario_v3_pending_empty_cannot_vote_yet() {
   hdr "Scenario v3: pending vacío, puede_votar_ya=false → 'ya canjeado, vuelve el ...'"
   reset_mock
   local pending
-  pending=$(curl -s "$MOCK_URL/api/vote/v3/pending?nick=already-carol")
+  pending=$(curl -s "$MOCK_URL/api/vote/v3/pending?nick=already-carol" \
+              -H "Authorization: Bearer TESTKEY")
   if echo "$pending" | grep -q '"puede_votar_ya": false'; then
     ok "puede_votar_ya=false (caso 'ya canjeó hoy')"
   else
@@ -142,9 +150,38 @@ scenario_v3_pending_invalid_key_403() {
   hdr "Scenario v3: 403 → clave incorrecta"
   reset_mock
   local code
-  code=$(curl -s -o /dev/null -w "%{http_code}" "$MOCK_URL/api/vote/v3/pending?nick=invalidkey-dave")
+  code=$(curl -s -o /dev/null -w "%{http_code}" \
+            "$MOCK_URL/api/vote/v3/pending?nick=invalidkey-dave" \
+            -H "Authorization: Bearer TESTKEY")
   if [ "$code" = "403" ]; then
     ok "Mock devuelve HTTP 403 para nick con prefijo 'invalidkey-'"
+  else
+    ko "Esperado 403, recibí: $code"
+  fi
+}
+
+scenario_v3_pending_no_auth_401() {
+  hdr "Scenario v3: 401 → falta Authorization"
+  reset_mock
+  local code
+  code=$(curl -s -o /dev/null -w "%{http_code}" \
+            "$MOCK_URL/api/vote/v3/pending?nick=success-alice")
+  if [ "$code" = "401" ]; then
+    ok "Mock devuelve HTTP 401 sin Authorization header"
+  else
+    ko "Esperado 401, recibí: $code"
+  fi
+}
+
+scenario_v3_pending_wrong_bearer_403() {
+  hdr "Scenario v3: 403 → Bearer incorrecto"
+  reset_mock
+  local code
+  code=$(curl -s -o /dev/null -w "%{http_code}" \
+            "$MOCK_URL/api/vote/v3/pending?nick=success-alice" \
+            -H "Authorization: Bearer WRONGKEY")
+  if [ "$code" = "403" ]; then
+    ok "Mock devuelve HTTP 403 con bearer incorrecto"
   else
     ko "Esperado 403, recibí: $code"
   fi
@@ -460,6 +497,8 @@ case "$SCEN" in
     scenario_v3_pending_empty_can_vote
     scenario_v3_pending_empty_cannot_vote_yet
     scenario_v3_pending_invalid_key_403
+    scenario_v3_pending_no_auth_401
+    scenario_v3_pending_wrong_bearer_403
     scenario_v3_ack_response_shape
     scenario_manual_vote40
     ;;

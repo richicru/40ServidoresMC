@@ -223,6 +223,148 @@ class TestVoteCMD {
     }
 
     @Test
+    void userIp_sentInPlaintext_notHashed() throws Exception {
+        // El user_ip va en claro al server. NO se hashea con SHA-256: el server
+        // lo cruza con la IP que el usuario dejó al votar en la web, y un hash
+        // sin sal nunca cuadraría.
+        PendingVotesResponse pending = new PendingVotesResponse();
+        pending.setApiVersion(3);
+        pending.setVotosPendientes(Collections.singletonList(makePending(111L)));
+        pending.setPuedeVotarYa(true);
+        when(apiClient.fetchPendingVotes("alice")).thenReturn(CompletableFuture.completedFuture(pending));
+
+        final String[] capturedBody = {null};
+        AckResponse ack = new AckResponse();
+        ack.setEntregado(true);
+        when(apiClient.sendAck(any(), eq("alice"), eq(true), org.mockito.ArgumentMatchers.anyString()))
+                .thenAnswer(inv -> {
+                    // Capturamos lo que el plugin está mandando para verificar.
+                    // Para capturarlo necesitamos hacer el send real, no mock.
+                    // Por simplicidad, validamos vía peekPendingAcks + verificación del argumento.
+                    String userIp = inv.getArgument(3);
+                    assertEquals("203.0.113.42", userIp,
+                            "user_ip debe ir en claro, NO como hash. Recibido: " + userIp);
+                    return CompletableFuture.completedFuture(ack);
+                });
+
+        // getPlayerIp devuelve una IP pública
+        when(plugin.getPlayerIp("alice")).thenReturn("203.0.113.42");
+
+        MockCommandSender alice = MockCommandSender.player("alice");
+        cmd.execute(plugin, alice, "voto40", Collections.emptyList());
+
+        Thread.sleep(200);
+
+        // Verifica que sendAck fue llamado con la IP en claro (no con un hash de 64 chars)
+        org.mockito.Mockito.verify(apiClient).sendAck(
+                org.mockito.ArgumentMatchers.anyList(),
+                eq("alice"),
+                eq(true),
+                eq("203.0.113.42"));
+    }
+
+    @Test
+    void userIp_emptyWhenLikelyBehindProxy() throws Exception {
+        // Si el server está detrás de BungeeCord sin ip-forward, getPlayerIp() devuelve
+        // una IP privada (127.x, 10.x, 192.168.x, etc.). En ese caso NO mandamos
+        // user_ip: una IP constante para todos = "no coincide" permanente en cada voto
+        // y hace parecer fraudulento al servidor.
+        PendingVotesResponse pending = new PendingVotesResponse();
+        pending.setApiVersion(3);
+        pending.setVotosPendientes(Collections.singletonList(makePending(222L)));
+        pending.setPuedeVotarYa(true);
+        when(apiClient.fetchPendingVotes("proxy_user")).thenReturn(CompletableFuture.completedFuture(pending));
+
+        AckResponse ack = new AckResponse();
+        ack.setEntregado(true);
+        when(apiClient.sendAck(any(), eq("proxy_user"), eq(true), org.mockito.ArgumentMatchers.anyString()))
+                .thenAnswer(inv -> {
+                    String userIp = inv.getArgument(3);
+                    assertEquals("", userIp,
+                            "Si IP parece de proxy, mandamos cadena vacía (no la IP del proxy). Recibido: " + userIp);
+                    return CompletableFuture.completedFuture(ack);
+                });
+
+        // Simula IP de BungeeCord: 192.168.x
+        when(plugin.getPlayerIp("proxy_user")).thenReturn("192.168.1.50");
+
+        MockCommandSender sender = MockCommandSender.player("proxy_user");
+        cmd.execute(plugin, sender, "voto40", Collections.emptyList());
+
+        Thread.sleep(200);
+
+        org.mockito.Mockito.verify(apiClient).sendAck(
+                org.mockito.ArgumentMatchers.anyList(),
+                eq("proxy_user"),
+                eq(true),
+                eq(""));
+    }
+
+    @Test
+    void retryPendingAcks_isCalledAtStartOfExecution() throws Exception {
+        when(apiClient.fetchPendingVotes("alice")).thenReturn(new CompletableFuture<>());
+
+        // Verifica que retryPendingAcks se llama al principio (con los ids pendientes
+        // que pueda haber del intento anterior).
+        MockCommandSender alice = MockCommandSender.player("alice");
+        cmd.execute(plugin, alice, "voto40", Collections.emptyList());
+
+        org.mockito.Mockito.verify(apiClient).retryPendingAcks("alice");
+    }
+
+    @Test
+    void ackFailure_storesIdsForLaterRetry() throws Exception {
+        // Si el ack falla DESPUÉS de entregar el premio, los ids deben quedar en el
+        // PendingAckStore para que el próximo /voto40 los re-confirme sin volver a
+        // entregar el premio.
+        PendingVotesResponse pending = new PendingVotesResponse();
+        pending.setApiVersion(3);
+        pending.setVotosPendientes(Collections.singletonList(makePending(555L)));
+        pending.setPuedeVotarYa(true);
+        when(apiClient.fetchPendingVotes("eve")).thenReturn(CompletableFuture.completedFuture(pending));
+
+        // El ack falla con IOException (timeout, red caída, etc.)
+        when(apiClient.sendAck(any(), any(), anyBoolean(), anyString())).thenReturn(
+                CompletableFuture.failedFuture(new java.io.IOException("timeout")));
+
+        MockCommandSender eve = MockCommandSender.player("eve");
+        cmd.execute(plugin, eve, "voto40", Collections.emptyList());
+
+        Thread.sleep(200);
+
+        // El plugin debe haber añadido los ids al store para retry posterior.
+        org.mockito.Mockito.verify(apiClient).addPendingAck(eq("eve"),
+                org.mockito.ArgumentMatchers.eq(Collections.singletonList(555L)));
+    }
+
+    @Test
+    void ackFailure_noStoreIds_whenDeliveryAlsoFailed() throws Exception {
+        // Si el ack falla Y la entrega también (algún dispatchCommand devolvió false
+        // o el jugador se desconectó), entonces el premio no se dio y NO añadimos
+        // los ids al store — si lo hiciéramos, el retry le cobraría al jugador sin
+        // haber recibido el premio.
+        PendingVotesResponse pending = new PendingVotesResponse();
+        pending.setApiVersion(3);
+        pending.setVotosPendientes(Collections.singletonList(makePending(777L)));
+        pending.setPuedeVotarYa(true);
+        when(apiClient.fetchPendingVotes("frank")).thenReturn(CompletableFuture.completedFuture(pending));
+
+        when(apiClient.sendAck(any(), any(), eq(false), anyString())).thenReturn(
+                CompletableFuture.failedFuture(new java.io.IOException("timeout")));
+
+        // dispatchCommand devuelve false → entrega falla
+        when(plugin.dispatchCommand(anyString())).thenReturn(false);
+
+        MockCommandSender frank = MockCommandSender.player("frank");
+        cmd.execute(plugin, frank, "voto40", Collections.emptyList());
+
+        Thread.sleep(200);
+
+        // Como la entrega falló, NO se añaden los ids al store.
+        org.mockito.Mockito.verify(apiClient, org.mockito.Mockito.never()).addPendingAck(any(), any());
+    }
+
+    @Test
     void ackFailure_deliveredStillTrue_sendsAckFailedMessage() throws Exception {
         PendingVotesResponse pending = new PendingVotesResponse();
         pending.setApiVersion(3);

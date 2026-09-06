@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Test;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -525,6 +526,49 @@ class TestApiClient {
         assertEquals("web", resp.getVotosPendientes().get(0).getOrigen());
     }
 
+    /**
+     * Test de regresión crítico: parsea los bytes EXACTOS de la API real
+     * (jugador "MuestraV3Jugador", id 254411, puede_votar_ya=false, siguiente_voto).
+     * Si el mapeo @SerializedName dejase de funcionar, este test fallaría
+     * ANTES de que el plugin llegase a producción, y los admins verían el
+     * error en consola en vez de "ya canjeado" para todos los jugadores.
+     */
+    @Test
+    void fetchPendingVotes_parsesRealApiBytes_forAlreadyCanjeado() throws Exception {
+        // JSON literal capturado del endpoint real el 06-sep-2026:
+        server.createContext("/api/vote/v3/pending", exchange -> {
+            String body = "{\n" +
+                    "  \"api_version\": 3,\n" +
+                    "  \"jugador\": \"MuestraV3Jugador\",\n" +
+                    "  \"servidor\": {\"id\": 66281, \"nombre\": \"Servidor de Muestra\", \"slug\": \"muestra-v3\", \"puesto\": 42},\n" +
+                    "  \"votos_pendientes\": [\n" +
+                    "    {\"id\": 254411, \"fecha\": \"2026-09-06T18:57:40+02:00\", \"dia\": \"2026-09-06\", \"origen\": \"web\"}\n" +
+                    "  ],\n" +
+                    "  \"reserva_segundos\": 300,\n" +
+                    "  \"puede_votar_ya\": false,\n" +
+                    "  \"siguiente_voto\": \"2026-09-07T06:57:40+02:00\"\n" +
+                    "}";
+            byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, bytes.length);
+            exchange.getResponseBody().write(bytes);
+            exchange.close();
+        });
+        client.testUrl = "http://127.0.0.1:" + server.getAddress().getPort() + "/api2.php?clave=";
+
+        com.cadiducho.cservidoresmc.model.PendingVotesResponse resp =
+                client.fetchPendingVotes("MuestraV3Jugador").get(2, TimeUnit.SECONDS);
+        assertNotNull(resp, "PendingVotesResponse no debe ser null");
+        assertEquals(3, resp.getApiVersion());
+        assertEquals("MuestraV3Jugador", resp.getJugador());
+        // Lo crítico: el JSON dice puede_votar_ya=false; si @SerializedName fallase,
+        // este assert pasaría a true (default de Java boolean) y los jugadores siempre
+        // verían "ya canjeado" aunque no hubiesen votado.
+        assertFalse(resp.isPuedeVotarYa(),
+                "puede_votar_ya debe leer 'false' del JSON snake_case");
+        assertEquals(254411L, resp.getVotosPendientes().get(0).getId());
+        assertEquals("2026-09-07T06:57:40+02:00", resp.getSiguienteVoto());
+    }
+
     @Test
     void fetchPendingVotes_sendsAuthorizationBearerHeader() throws Exception {
         final String[] capturedAuth = {null};
@@ -597,6 +641,89 @@ class TestApiClient {
         assertEquals("https://api.example.org", bareClient.getApiBase());
     }
 
+    // ============================================================
+    //  Retry de acks fallidos
+    // ============================================================
+
+    @Test
+    void retryPendingAcks_sendsThemAndClearsOnSuccess() throws Exception {
+        java.util.concurrent.atomic.AtomicInteger ackHits = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.atomic.AtomicReference<List<Long>> ackIds = new java.util.concurrent.atomic.AtomicReference<>();
+        server.createContext("/api/vote/v3/ack", exchange -> {
+            byte[] body = exchange.getRequestBody().readAllBytes();
+            String bodyStr = new String(body, StandardCharsets.UTF_8);
+            // extraer los ids del JSON {"votos":[1,2,3],...} — simple regex
+            java.util.regex.Matcher m = java.util.regex.Pattern.compile("\"votos\":\\[([^]]*)]").matcher(bodyStr);
+            if (m.find()) {
+                String list = m.group(1).trim();
+                java.util.List<Long> ids = new java.util.ArrayList<>();
+                if (!list.isEmpty()) {
+                    for (String s : list.split(",")) {
+                        ids.add(Long.parseLong(s.trim()));
+                    }
+                }
+                ackIds.set(ids);
+            }
+            ackHits.incrementAndGet();
+            byte[] bytes = "{\"api_version\":3,\"confirmados\":[1,2,3],\"entregado\":true}".getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, bytes.length);
+            exchange.getResponseBody().write(bytes);
+            exchange.close();
+        });
+        client.testUrl = "http://127.0.0.1:" + server.getAddress().getPort() + "/api2.php?clave=";
+
+        client.addPendingAck("alice", java.util.Arrays.asList(1L, 2L, 3L));
+        client.retryPendingAcks("alice").get(2, TimeUnit.SECONDS);
+
+        assertEquals(1, ackHits.get(), "Debe haber hecho exactamente 1 retry");
+        assertEquals(java.util.Arrays.asList(1L, 2L, 3L), ackIds.get(),
+                "El retry debe llevar los ids que estaban en el store");
+        assertTrue(client.peekPendingAcks("alice").isEmpty(),
+                "Si el ack tuvo éxito, los ids deben salir del store");
+    }
+
+    @Test
+    void retryPendingAcks_keepsIdsOnFailure() throws Exception {
+        java.util.concurrent.atomic.AtomicInteger hits = new java.util.concurrent.atomic.AtomicInteger();
+        server.createContext("/api/vote/v3/ack", exchange -> {
+            hits.incrementAndGet();
+            exchange.sendResponseHeaders(503, -1);
+            exchange.close();
+        });
+        client.testUrl = "http://127.0.0.1:" + server.getAddress().getPort() + "/api2.php?clave=";
+
+        client.addPendingAck("bob", java.util.Arrays.asList(99L, 100L));
+        try {
+            client.retryPendingAcks("bob").get(2, TimeUnit.SECONDS);
+        } catch (Exception ignored) {
+            // El exceptionally interno ya manejó el error; la cadena exterior
+            // se completa sin throw porque usamos handle(...)
+        }
+        // Damos un momento a que termine el callback interno (que hace re-add).
+        Thread.sleep(100);
+
+        assertEquals(1, hits.get(), "Debe haber hecho el retry");
+        assertEquals(java.util.Arrays.asList(99L, 100L), client.peekPendingAcks("bob"),
+                "Si el retry falla, los ids deben volver al store para próximo intento");
+    }
+
+    @Test
+    void retryPendingAcks_emptyStoreIsNoOp() throws Exception {
+        // No debe haber petición HTTP cuando no hay ids pendientes.
+        java.util.concurrent.atomic.AtomicInteger hits = new java.util.concurrent.atomic.AtomicInteger();
+        server.createContext("/api/vote/v3/ack", exchange -> {
+            hits.incrementAndGet();
+            exchange.sendResponseHeaders(200, -1);
+            exchange.close();
+        });
+        client.testUrl = "http://127.0.0.1:" + server.getAddress().getPort() + "/api2.php?clave=";
+
+        com.cadiducho.cservidoresmc.model.AckResponse r =
+                client.retryPendingAcks("nobody").get(2, TimeUnit.SECONDS);
+        assertNull(r, "Sin ids pendientes, retryPendingAcks devuelve null sin tocar la red");
+        assertEquals(0, hits.get(), "No debe hacerse ninguna petición HTTP");
+    }
+
     /**
      * TestableApiClient expone un setter para sobreescribir la URL base en tiempo
      * de tests. La clase real (ApiClient) tiene la URL hardcodeada — esta envoltura
@@ -616,6 +743,21 @@ class TestApiClient {
         @Override
         protected String getBaseUrl() {
             return testUrl != null ? testUrl : super.getBaseUrl();
+        }
+
+        @Override
+        protected String getApiBase() {
+            // En tests el testUrl puede incluir un path de prueba (ej. "/test/success?clave=TESTKEY").
+            // Si getApiBase() truncase al host, perderíamos el path. Devolvemos testUrl
+            // tal cual cuando está configurado.
+            if (testUrl != null) {
+                // Devolver sólo scheme+host+port, igual que getBaseUrl hace.
+                int protocolEnd = testUrl.indexOf("://");
+                if (protocolEnd < 0) return testUrl;
+                int pathStart = testUrl.indexOf('/', protocolEnd + 3);
+                return (pathStart > 0) ? testUrl.substring(0, pathStart) : testUrl;
+            }
+            return super.getApiBase();
         }
     }
 }

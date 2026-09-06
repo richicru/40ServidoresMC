@@ -11,7 +11,7 @@ import com.cadiducho.cservidoresmc.model.PendingVote;
 import com.cadiducho.cservidoresmc.model.PendingVotesResponse;
 import com.cadiducho.cservidoresmc.model.VoteResponse;
 import com.cadiducho.cservidoresmc.model.VoteStatus;
-import com.cadiducho.cservidoresmc.util.IpHashing;
+import com.cadiducho.cservidoresmc.util.IpSanitizer;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -64,6 +64,14 @@ public class VoteCMD extends CSCommand {
         // Protocolo v3: pending → entregar → ack. Es asíncrono pero lineal;
         // cada paso depende del anterior. No se reintenta pending en bucle.
         String nick = sender.getName();
+
+        // Antes de pedir el pending actual, intentamos confirmar al server los
+        // ids que entregamos en una llamada anterior pero cuyo ack falló.
+        // Si el ack funciona, los ids salen del store; si vuelve a fallar,
+        // round-trip a retryPendingAcks los re-almacena para el siguiente intento.
+        // Fire-and-forget: no esperamos a que termine.
+        plugin.getApiClient().retryPendingAcks(nick);
+
         plugin.getApiClient().fetchPendingVotes(nick).thenCompose(pending -> {
             // pending NUNCA es null aquí; ApiClient valida que el body no esté vacío.
             if (pending.getVotosPendientes() == null || pending.getVotosPendientes().isEmpty()) {
@@ -125,27 +133,54 @@ public class VoteCMD extends CSCommand {
                 return new DeliveryResult(allOk && playerStillOnline);
             });
 
-            String ipHash = computeIpHash(plugin, nick);
+            String userIp = computeUserIp(plugin, nick);
             boolean delivered = result.deliveryOk;
 
-            // Ack — no retry, no bucles. Si falla el ack se loguea pero no se reintenta.
-            // La reserva vence a los `reservaSegundos` (5 min por defecto).
-            plugin.getApiClient().sendAck(voteIds, nick, delivered, ipHash).thenAccept(ack -> {
-                plugin.runSyncForPlayer(nick, () -> onAckReceived(plugin, sender, ack, delivered));
-            }).exceptionally(e -> {
-                // Si el ack falla, no es crítico: la reserva expira sola. Logueamos
-                // para que el admin sepa que algo va mal con el endpoint ack.
-                plugin.logError("v3 ack falló (la reserva expirará sola en " +
-                        pending.getReservaSegundos() + "s): " + unwrapRootCause(e).getMessage());
-                plugin.runSyncForPlayer(nick, () -> {
-                    // Mensaje al jugador: premio entregado (o no), no pudimos confirmar.
-                    if (delivered) {
-                        sender.sendMessageWithTag(MessageKey.VOTE_V3_ACK_FAILED.resolve(plugin.getCSConfiguration()));
-                    }
-                });
-                return null;
-            });
+            // Ack — no retry síncrono, no bucles. Si falla el ack los ids van al
+            // store PendingAckStore y se reintentan en el próximo /voto40 del mismo
+            // jugador. La reserva vence a los `reservaSegundos` (5 min por defecto)
+            // por si el retry tampoco funciona.
+            plugin.getApiClient().sendAck(voteIds, nick, delivered, userIp)
+                    .thenAccept(ack -> {
+                        if (ack != null && ack.isEntregado()) {
+                            // Ack confirmado: no queda nada pendiente.
+                            plugin.runSyncForPlayer(nick, () -> onAckReceived(plugin, sender, ack, delivered));
+                        } else {
+                            // Ack falló o devolvió entregado=false: lo guardamos para retry.
+                            // Si delivered=true (premio entregado al jugador), el server lo
+                            // habrá considerado "ya recompensado" al re-ackear.
+                            if (delivered) {
+                                plugin.getApiClient().addPendingAck(nick, voteIds);
+                            }
+                            plugin.runSyncForPlayer(nick, () -> onAckFailed(plugin, sender, delivered));
+                        }
+                    }).exceptionally(e -> {
+                        Throwable root = unwrapRootCause(e);
+                        plugin.logError("v3 ack falló (la reserva expirará sola en " +
+                                pending.getReservaSegundos() + "s): " + root.getClass().getName() +
+                                ": " + root.getMessage());
+                        // Si la entrega tuvo éxito, guardamos los ids para retry en el
+                        // próximo /voto40 (que ocurrirá tras el cooldown).
+                        if (delivered) {
+                            plugin.getApiClient().addPendingAck(nick, voteIds);
+                        }
+                        plugin.runSyncForPlayer(nick, () -> onAckFailed(plugin, sender, delivered));
+                        return null;
+                    });
         });
+    }
+
+    /**
+     * Devuelve la IP a mandar al server en el campo {@code user_ip} del ack.
+     * Si el server está detrás de un proxy sin ip-forward (loopback o red privada),
+     * NO mandamos IP — el server rechazaría el cruce en cada voto y haría parecer
+     * fraudulento al servidor entero.
+     */
+    private String computeUserIp(CSPlugin plugin, String nick) {
+        String raw = plugin.getPlayerIp(nick);
+        if (raw == null) return "";
+        if (IpSanitizer.isLikelyBehindProxy(raw)) return "";
+        return IpSanitizer.sanitize(raw);
     }
 
     /**
@@ -174,8 +209,28 @@ public class VoteCMD extends CSCommand {
     }
 
     private String computeIpHash(CSPlugin plugin, String nick) {
-        String ip = plugin.getPlayerIp(nick);
-        return IpHashing.hash(ip);
+        // No-op: el método legacy computeIpHash ya no se usa (computeUserIp lo reemplaza).
+        return "";
+    }
+
+    /**
+     * Mensajes al jugador cuando el ack falló (timeout/red) o vino con
+     * entregado=false. Distinguimos dos casos:
+     * <ul>
+     *   <li>El premio SÍ se entregó al jugador pero no pudimos confirmarlo:
+     *       la reserva expirará sola. Le avisamos para que no crea que fue
+     *       un duplicado.</li>
+     *   <li>El premio NO se entregó (algún dispatchCommand falló o el jugador
+     *       se desconectó durante la entrega). Le pedimos que vuelva a /voto40
+     *       en unos minutos — la reserva ya fue liberada con entregado:false.</li>
+     * </ul>
+     */
+    private void onAckFailed(CSPlugin plugin, CSCommandSender sender, boolean delivered) {
+        if (delivered) {
+            sender.sendMessageWithTag(MessageKey.VOTE_V3_ACK_FAILED.resolve(plugin.getCSConfiguration()));
+        } else {
+            sender.sendMessageWithTag(MessageKey.VOTE_V3_DELIVERY_FAILED.resolve(plugin.getCSConfiguration()));
+        }
     }
 
     /**

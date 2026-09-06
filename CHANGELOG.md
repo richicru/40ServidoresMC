@@ -5,6 +5,51 @@ Todos los cambios relevantes del plugin se documentan en este archivo.
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/),
 y este proyecto se adhiere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.1] - 2026-09-06
+
+### Corregido (bugs detectados contra endpoint real)
+- **`user_ip` ya NO se hashea con SHA-256.** El operador de 40servidoresmc.es
+  cruza `user_ip` contra la IP que el usuario dejó al votar en la web
+  (validada con `filter_var($ip, FILTER_VALIDATE_IP)`, hasheada con
+  `APP_SECRET` como sal). Un SHA-256 sin sal nunca cuadraría. Ahora
+  mandamos la IP en claro, validada con `InetAddress.getByName()`.
+  IP inválida / con scope IPv6 → descartada silenciosamente.
+- **Mock ahora produce los bytes REALES del endpoint** (`MuestraV3Jugador`,
+  `id 254411`, `slug "muestra-v3"`, `puesto 42`, fechas reales). Antes
+  tenía id 109, slug "mockserver" — los tests podían pasar pero el plugin
+  no estaba validado contra producción. Añadido test de regresión que
+  parsea los bytes literales y verifica `puede_votarYa=false`.
+- **Detección 401 vs 403:** el mock distingue ahora falta de
+  `Authorization` header (401) y bearer incorrecto (403).
+- **Heurística de BungeeCord sin ip-forward:** si `getPlayerIp()` devuelve
+  una IP loopback o privada (127/8, 10/8, 172.16/12, 192.168/16, 169.254/16,
+  fe80::/10, ::1) — síntoma típico de proxy sin forwarding — NO mandamos
+  `user_ip`. Una IP constante para todos los jugadores produce cruces
+  negativos en cada voto y hace parecer fraudulento al servidor entero.
+- **Cache de acks pendientes (`PendingAckStore`):** si la entrega del
+  premio tuvo éxito pero el ack posterior falló (timeout/red), los ids
+  quedan en memoria. En el siguiente `/voto40` del mismo jugador, se
+  reintenta el ack (con `delivered:true`) sin volver a entregar el premio.
+  Convierte el "duplicado aceptado" en prácticamente cero, sin bucles.
+  Si el retry también falla, los ids vuelven al store para el siguiente.
+- **Mensaje correcto cuando la entrega falla Y el ack falla:** ahora se
+  manda `VOTE_V3_DELIVERY_FAILED` ("vuelve a /voto40 en unos minutos")
+  en vez de quedarse en silencio.
+
+### Añadido
+- `IpSanitizer` reemplaza a `IpHashing`: sólo sanea (IPv6 scope, formato
+  inválido) y detecta IPs de proxy. Sin hash.
+- `PendingAckStore`: cache en memoria de ids pendientes de ack.
+- `ApiClient.retryPendingAcks(nick)` / `addPendingAck(nick, ids)` /
+  `peekPendingAcks(nick)`.
+- `IpSanitizer.isLikelyBehindProxy(ip)`: heurística loopback/privada.
+- Test de regresión: parsea bytes reales de la API ("MuestraV3Jugador").
+- Tests para `IpSanitizer` (sanitize + isLikelyBehindProxy + boundaries).
+- Tests para `PendingAckStore`.
+- Tests para `retryPendingAcks` (éxito, fallo, no-op).
+- Tests en `TestVoteCMD`: `userIp` en claro, vacío en proxy, retry al inicio,
+  store ids si delivery+ack fallan, no-store si delivery falla.
+
 ## [3.1.0] - 2026-09-06
 
 ### Añadido

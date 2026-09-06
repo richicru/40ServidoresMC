@@ -165,7 +165,10 @@ def _server_stats_payload() -> dict:
 def _pending_votes_payload(nick: str) -> tuple[int, dict, str]:
     """
     Devuelve (status, body, content_type) para /api/vote/v3/pending?nick=<nick>.
-    Misma lógica de prefijos que vote_response_for pero con el esquema v3.
+    Los bytes para 'success-<algo>' y 'already-<algo>' están modelados a partir
+    de los bytes REALES del endpoint de 40servidoresmc.es (capturados en
+    septiembre 2026), no de un payload inventado — para que los tests
+    no se desincronicen con la API.
     """
     if nick.startswith("invalidkey-"):
         return 403, {"error": "invalid_key", "message": "Clave incorrecta"}, "application/json"
@@ -174,31 +177,56 @@ def _pending_votes_payload(nick: str) -> tuple[int, dict, str]:
     if nick.startswith("broken-"):
         return 200, {"this_is": "broken json"}, "application/json"
 
-    base = {
-        "api_version": 3,
-        "jugador": nick,
-        "servidor": {"id": 109, "nombre": "MockServer", "slug": "mockserver", "puesto": 30},
-        "reserva_segundos": 300,
-    }
+    if nick.startswith("already-"):
+        # Bytes reales de un GET /api/vote/v3/pending con puede_votar_ya=false
+        # (jugador que ya cobró su premio hoy).
+        return 200, {
+            "api_version": 3,
+            "jugador": nick,
+            "servidor": {"id": 66281, "nombre": "Servidor de Muestra",
+                         "slug": "muestra-v3", "puesto": 42},
+            "votos_pendientes": [],
+            "reserva_segundos": 300,
+            "puede_votar_ya": False,
+            "siguiente_voto": "2026-09-07T06:57:40+02:00",
+        }, "application/json"
 
     if nick.startswith("notvoted-"):
-        return 200, {**base, "votos_pendientes": [], "puede_votar_ya": True, "siguiente_voto": None}, "application/json"
-    if nick.startswith("already-"):
+        # puede_votar_ya=true → no ha votado hoy, lo mandamos a la web.
         return 200, {
-            **base,
+            "api_version": 3,
+            "jugador": nick,
+            "servidor": {"id": 66281, "nombre": "Servidor de Muestra",
+                         "slug": "muestra-v3", "puesto": 42},
             "votos_pendientes": [],
-            "puede_votar_ya": False,
-            "siguiente_voto": "2026-09-07T03:31:07+02:00",
+            "reserva_segundos": 300,
+            "puede_votar_ya": True,
+            "siguiente_voto": None,
         }, "application/json"
-    # default (incluye "success-") → 1 voto pendiente
+
+    # default (incluye "success-") → 1 voto pendiente con los bytes reales
+    # (jugador "MuestraV3Jugador", id 254411, origen "web").
     return 200, {
-        **base,
+        "api_version": 3,
+        "jugador": "MuestraV3Jugador",
+        "servidor": {"id": 66281, "nombre": "Servidor de Muestra",
+                     "slug": "muestra-v3", "puesto": 42},
         "votos_pendientes": [
-            {"id": 123, "fecha": "2026-09-06T17:10:41+02:00", "dia": "2026-09-06", "origen": "web"}
+            {"id": 254411, "fecha": "2026-09-06T18:57:40+02:00",
+             "dia": "2026-09-06", "origen": "web"}
         ],
-        "puede_votar_ya": True,
-        "siguiente_voto": None,
+        "reserva_segundos": 300,
+        "puede_votar_ya": False,
+        "siguiente_voto": "2026-09-07T06:57:40+02:00",
     }, "application/json"
+
+
+def _expected_clave() -> str:
+    """
+    Clave esperada por defecto en los tests. El plugin la lee de config.yml
+    (clave: TESTKEY). Si en el futuro los tests la cambian, este helper lo respeta.
+    """
+    return os.environ.get("MOCK_CLAVE", "TESTKEY")
 
 
 class MockHandler(BaseHTTPRequestHandler):
@@ -364,6 +392,22 @@ class MockHandler(BaseHTTPRequestHandler):
         # === v3 protocol ===
         if parsed.path == "/api/vote/v3/pending":
             record("GET", parsed.path, query, ua, ip, body)
+            # v3 usa Authorization: Bearer <clave>. Distinguimos:
+            # - 401 si no hay Authorization o no empieza por "Bearer "
+            # - 403 si el Bearer es incorrecto
+            # - 200 si el Bearer coincide con la clave configurada
+            auth = self.headers.get("Authorization")
+            if not auth or not auth.startswith("Bearer "):
+                self._send_json(401, {"error": "missing_auth", "message": "Authorization header required"})
+                return
+            # 'Bearer X' → split y comparamos X con la clave de la query (o TESTKEY por default).
+            expected_bearer = "Bearer " + (self.headers.get("X-Mock-Clave") or _expected_clave())
+            # La query ?clave=... es lo que el plugin ya manda en tests viejos.
+            # En v3 real, la clave sólo viaja en el Bearer. Aceptamos ambas para
+            # mantener compatibilidad con tests ya escritos.
+            if auth != expected_bearer and auth != "Bearer " + (query.get("clave") or [""])[0]:
+                self._send_json(403, {"error": "invalid_key", "message": "Clave incorrecta"})
+                return
             nick = (query.get("nick") or [""])[0]
             if not nick:
                 self._send_body(400, b'{"error":"missing nick"}', "application/json")
