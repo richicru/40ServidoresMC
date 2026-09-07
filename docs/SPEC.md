@@ -1,6 +1,7 @@
 # Especificación técnica — 40ServidoresMC Plugin
 
-> Documento de especificación generado a partir del código fuente en la rama `dev` (v3.0).
+> Documento de especificación técnica. Actualizado a mano en cada versión relevante —
+> si algo aquí contradice el código o el `CHANGELOG.md`, confía en el código y avisa.
 
 ## 1. Resumen
 
@@ -13,10 +14,10 @@ El proyecto es un plugin **multiplataforma**: una base de lógica común (`commo
 entre varias implementaciones concretas por plataforma (Bukkit/Spigot y Sponge), pensada para
 poder extenderse a BungeeCord y otras.
 
-- **Autor:** Cadiducho
-- **Versión actual:** 3.0
+- **Autor original:** Cadiducho. **Mantenedor del fork actual:** [@richicru](https://github.com/richicru).
+- **Versión actual:** 3.1.2 (ver [CHANGELOG.md](../CHANGELOG.md) para el historial completo).
 - **Licencia:** ver [LICENSE](../LICENSE)
-- **Wiki:** https://github.com/Cadiducho/40ServidoresMC/wiki
+- **Wiki:** https://github.com/richicru/40ServidoresMC/wiki
 
 ## 2. Funcionalidad
 
@@ -48,9 +49,12 @@ Cobertura verificada según datos reales de la audiencia (ver [SERVERS.md](SERVE
 - **Paper / Purpur / Spigot / Pufferfish / Leaf** — soportados hoy (módulo `bukkit`).
 - **Velocity / BungeeCord / Waterfall** — el plugin corre en el backend; 44% de la
   audiencia los usa como proxy. Sin cambios necesarios.
-- **Sponge API 7** — soportado hoy (módulo `sponge/api7`).
-- **Folia** — **plan pendiente** en [FOLIA.md](FOLIA.md). Requiere refactor de los
-  callbacks asíncronos y de los usos de `BukkitScheduler`.
+- **Sponge API 7** — soportado hoy (módulo `sponge/api7`, tarea Gradle `:sponge-api7`).
+- **Folia** — **soportado desde v3.0.2** (detección runtime, schedulers region-aware
+  vía `EntityScheduler`/`GlobalRegionScheduler`/`RegionScheduler` con reflection; ver
+  [FOLIA.md](FOLIA.md) para el histórico del plan y `docs/testing/Local-Test-Setup.md`
+  para cómo se prueba). Verificado con un jugador real conectado vía protocolo contra
+  Paper y Folia (`scripts/test-vote-e2e-real.sh`), no sólo con tests unitarios.
 
 ## 3. Arquitectura
 
@@ -174,8 +178,11 @@ Comandos registrados:
   extiende `JavaPlugin` e implementa `CSPlugin`.
 - `BukkitConfigurationAdapter` — adaptador de `config.yml`.
 - `BukkitCommandSender` — envoltorio del `CommandSender` de Bukkit.
-- `PlaceholderHook` — extensión de PlaceholderAPI (identificador `40servidoresmc`; sin
-  placeholders implementados todavía).
+- `PlaceholderHook` — extensión de PlaceholderAPI (identificador `40servidoresmc`), con
+  6 placeholders implementados desde v3.0: `%40servidoresmc_position%`,
+  `%40servidoresmc_day_votes%`, `%40servidoresmc_day_votes_rewarded%`,
+  `%40servidoresmc_week_votes%`, `%40servidoresmc_week_votes_rewarded%`,
+  `%40servidoresmc_server_name%` (caché de 5 min vía `StatsCache`).
 - `dispatchCommand` se ejecuta de forma síncrona vía el scheduler; `broadcastMessage`
   traduce códigos de color `&`.
 - Dependencias: Spigot API 1.16.5, PlaceholderAPI 2.10.9 (compileOnly), bStats 3.0.0.
@@ -197,17 +204,28 @@ Claves de configuración (ver [config.yml](../bukkit/src/main/resources/config.y
 |-------|------|-------------|
 | `debug` | bool | Activa logs de depuración. |
 | `clave` | string | Clave del servidor obtenida en la web (por defecto `key`, inválida). |
+| `api-url` | string | Base URL de la API (desde v3.0.4). Default `https://www.40servidoresmc.es/api2.php?clave=`; el plugin la trunca a la base y construye los paths v2/v3 sobre ella (`getApiBase()`). Cambiar el dominio ya no exige publicar un JAR nuevo. |
 | `broadcast.activado` | bool | Anunciar votos a todo el servidor. |
 | `broadcast.mensajeBroadcast` | string | Mensaje de anuncio (`{0}` = jugador). |
 | `mensaje` | string | Mensaje al recibir el premio. |
 | `comandosCustom` | lista | Comandos a ejecutar como recompensa (`{0}` = jugador). |
 | `tag` | string | Prefijo/tag del plugin en los mensajes. |
-| `readTimeOut` | int | Timeout de lectura HTTP (ms). |
+| `readTimeOut` | int | Timeout de lectura HTTP (ms). Default `10000` desde v3.0.4 (antes 5000: un timeout corto podía consumir el voto en el protocolo v2 sin que el jugador recibiera el premio). |
 | `cooldown` | int | Segundos entre validaciones de voto por jugador. Default: `60`. |
-| `update-branch` | string | Rama de GitHub a comprobar para actualizaciones. Default: `dev`. |
+| `stats-cmd-cache-seconds` | int | TTL de la caché dedicada de `/stats40` (desde v3.0.1). Default `30`; `0` la desactiva. |
+| `update-repo` / `update-branch` | string | Repo/rama de GitHub a comprobar para actualizaciones. Default: `richicru/40ServidoresMC` / `dev`. |
 | `log-ip` | bool | Si está activo, registra en consola `[VoteReward] player=X ip=Y` tras cada voto válido. Default: `false` (privacidad). |
 | `messages.*` | mapa | Mensajes traducibles. Ver [§6.1](#61-mensajes-traducibles). |
 | `configVer` | int | Versión de la configuración (actual: `4`). |
+
+Además, `plugin.yml` declara un bloque `permissions:` (desde v3.1.2):
+`40servidores.voto` → `default: true` (cualquier jugador, tal y como promete
+siempre la documentación); `40servidores.stats`/`40servidores.test`/
+`40servidores.actualizar`/`40servidores.recargar` → `default: op`. Antes de
+v3.1.2 no existía este bloque, así que **todos** los nodos —incluido
+`40servidores.voto`— caían en el fallback real de Bukkit
+(`PermissionDefault.OP`): sólo los operadores podían votar en un servidor sin
+plugin de permisos ya configurado a mano, contradiciendo la documentación.
 
 Validaciones al arrancar (`checkDefaultKey`):
 - Avisa si `configVer` no coincide con la versión esperada (`4`).
@@ -250,7 +268,7 @@ Artefactos generados (shadowJar): `40ServidoresMC-<version>-Bukkit.jar`,
 ```bash
 ./gradlew build              # Compila todos los módulos
 ./gradlew :bukkit:shadowJar  # Jar de Bukkit
-./gradlew :sponge:api7:shadowJar
+./gradlew :sponge-api7:shadowJar
 ./gradlew :common:test       # Tests del núcleo (JUnit 5)
 ```
 
@@ -259,18 +277,26 @@ Artefactos generados (shadowJar): `40ServidoresMC-<version>-Bukkit.jar`,
 Los tests unitarios viven en `common/src/test/java/com/cadiducho/cservidoresmc/` y usan
 **JUnit 5 (Jupiter)**. Se ejecutan con `./gradlew :common:test`.
 
-### 8.1 Inventario de tests (49 tests, todos en verde)
+### 8.1 Inventario de tests (144 tests, todos en verde)
 
 | Clase | Tests | Cubre |
 |---|---:|---|
-| [`TestUpdater`](../common/src/test/java/com/cadiducho/cservidoresmc/TestUpdater.java) | 1 | Parsing de `v3.json` desde GitHub. |
-| [`TestUpdaterInfo`](../common/src/test/java/com/cadiducho/cservidoresmc/TestUpdaterInfo.java) | 6 | Mapeo Minecraft → versión recomendada; casos vacíos, desconocidos, múltiples. |
+| [`TestApiClient`](../common/src/test/java/com/cadiducho/cservidoresmc/TestApiClient.java) | 29 | HTTP v2/v3 contra servidor local, circuit breaker, rate limit/429, retry de acks. |
+| [`TestVoteCMD`](../common/src/test/java/com/cadiducho/cservidoresmc/cmd/TestVoteCMD.java) | 15 | Flujo completo v3 de `/voto40` con Mockito: pending con/sin votos, ack éxito/fallo, `user_ip`, formato de `siguiente_voto`, cooldown, broadcast. |
+| [`TestIpSanitizer`](../common/src/test/java/com/cadiducho/cservidoresmc/util/TestIpSanitizer.java) | 10 | Saneo de IP (formato, scope IPv6) y heurística `isLikelyBehindProxy`. |
 | [`TestVoteStatus`](../common/src/test/java/com/cadiducho/cservidoresmc/TestVoteStatus.java) | 8 | Deserialización Gson del enum `VoteStatus` (`0`–`3`) y de `VoteResponse` completo. |
-| [`TestServerStats`](../common/src/test/java/com/cadiducho/cservidoresmc/TestServerStats.java) | 7 | Parsing de `ServerStats` con lista de votos llena, vacía y nula; bug conocido `StringIndexOutOfBoundsException` documentado. |
+| [`TestUpdater`](../common/src/test/java/com/cadiducho/cservidoresmc/TestUpdater.java) | 8 | Parsing de `v3.json` desde GitHub y manejo de errores HTTP. |
+| [`TestStatsCMD`](../common/src/test/java/com/cadiducho/cservidoresmc/cmd/TestStatsCMD.java) | 8 | `/stats40`, caché dedicada, formato string de `recompensado`. |
+| [`TestServerStats`](../common/src/test/java/com/cadiducho/cservidoresmc/TestServerStats.java) | 8 | Parsing de `ServerStats`, incluido `recompensado` como string real del servidor (no número). |
+| [`TestPendingAckStore`](../common/src/test/java/com/cadiducho/cservidoresmc/TestPendingAckStore.java) | 8 | Cache de acks pendientes: acumulación, aislamiento por nick, concurrencia, purga por TTL. |
+| [`TestMessageKey`](../common/src/test/java/com/cadiducho/cservidoresmc/TestMessageKey.java) | 8 | Catálogo de mensajes traducibles y overrides. |
+| [`TestStatsCache`](../common/src/test/java/com/cadiducho/cservidoresmc/TestStatsCache.java) | 7 | Caché de PlaceholderAPI (TTL, invalidación). |
 | [`TestCSCommand`](../common/src/test/java/com/cadiducho/cservidoresmc/TestCSCommand.java) | 7 | Lógica de autorización, metadatos, tab-complete stub y `CommandResult` enum. |
+| [`TestCircuitBreaker`](../common/src/test/java/com/cadiducho/cservidoresmc/TestCircuitBreaker.java) | 7 | Apertura/cierre/backoff exponencial/cap del circuit breaker. |
+| [`TestUserAgent`](../common/src/test/java/com/cadiducho/cservidoresmc/TestUserAgent.java) | 6 | Formato del User-Agent (plugin/plataforma/versión servidor/Java). |
+| [`TestUpdaterInfo`](../common/src/test/java/com/cadiducho/cservidoresmc/TestUpdaterInfo.java) | 6 | Mapeo Minecraft → versión recomendada; casos vacíos, desconocidos, múltiples. |
 | [`TestCooldown`](../common/src/test/java/com/cadiducho/cservidoresmc/TestCooldown.java) | 6 | Cooldown por jugador, expiración, aislamiento entre jugadores. |
-| [`TestApiClient`](../common/src/test/java/com/cadiducho/cservidoresmc/TestApiClient.java) | 6 | HTTP contra servidor local (`com.sun.net.httpserver`): éxito, error 500, JSON malformado, lectura de la clave desde config. |
-| [`TestVoteCMD`](../common/src/test/java/com/cadiducho/cservidoresmc/cmd/TestVoteCMD.java) | 8 | Flujo completo de `/voto40` con Mockito: SUCCESS, NOT_VOTED, ALREADY_VOTED, INVALID_KEY, cooldown, broadcast, excepciones. |
+| [`TestRateLimitedException`](../common/src/test/java/com/cadiducho/cservidoresmc/TestRateLimitedException.java) | 3 | Excepción de 429 y `Retry-After`. |
 
 ### 8.2 Helpers de tests
 
@@ -280,29 +306,43 @@ Los tests unitarios viven en `common/src/test/java/com/cadiducho/cservidoresmc/`
   Bukkit/Sponge real.
 - **Mockito 5.7.0** — usado en `TestVoteCMD` para mockear `ApiClient` y `CSPlugin`.
 
-### 8.3 Áreas NO cubiertas aún
+### 8.3 Lo que los tests unitarios NO pueden pillar (y sí el e2e real)
 
-- Integración contra servidor real (Paper/Folia/Sponge). Pendiente de configurar Docker
-  Compose (ver [SERVERS.md](SERVERS.md)).
+Los 144 tests de arriba mockean `dispatchCommand`/`CSPlugin` a propósito —no
+levantan un Bukkit/Folia real—, así que por diseño no pueden detectar bugs
+en la implementación real de los schedulers de `BukkitPlugin` (Folia
+`EntityScheduler`/`GlobalRegionScheduler` por reflection, el resultado real
+de `Bukkit.dispatchCommand()`). Tres bugs críticos de v3.1.2 eran
+exactamente de este tipo y sólo se manifestaban con un jugador real
+ejecutando `/voto40`. Por eso existe `scripts/test-vote-e2e-real.sh`
+(§ver `docs/testing/Local-Test-Setup.md`): conecta un bot de protocolo real
+a Paper y Folia, no consola ni RCON, y verifica tanto el chat del jugador
+como el `ack` real que el plugin manda al servidor.
+
+Áreas que siguen sin test automático:
 - `Updater.checkearVersion` con mock del endpoint HTTP (hoy solo se prueba el parsing).
-- PlaceholderAPI placeholders reales.
-- `ReloadCMD`, `StatsCMD`, `UpdateCMD`, `TestCMD` (similar a `VoteCMD` cuando se quiera).
-
+- `ReloadCMD`, `UpdateCMD` (similar a `VoteCMD`/`StatsCMD` cuando se quiera).
+- Módulo `sponge/api7` no tiene tests propios (comparte la lógica de `common`,
+  que sí está cubierta; su capa de integración con SpongeAPI no).
 
 
 ## 9. Recursos externos
 
 | Recurso | Uso |
 |---------|-----|
-| `https://40servidoresmc.es/api2.php` | API de votos y estadísticas. |
-| `https://40servidoresmc.es/miservidor.php` | Panel del servidor (obtener la clave). |
+| `https://www.40servidoresmc.es/api2.php` | API legacy de votos (v2) y estadísticas (`/stats40`). Base configurable vía `api-url` desde v3.0.4. |
+| `https://www.40servidoresmc.es/api/vote/v3/pending` y `/api/vote/v3/ack` | Protocolo v3 (desde v3.1.0): pedir votos pendientes y confirmar la entrega con Bearer auth. El voto sólo se marca cobrado tras el `ack`, así que una respuesta perdida no quema el premio (el fallo estructural del v2). Ambos protocolos conviven sin fecha de retirada. |
+| `https://www.40servidoresmc.es/miservidor.php` | Panel del servidor (obtener la clave). |
 | `raw.githubusercontent.com/richicru/40ServidoresMC/dev/etc/v3.json` | Datos de versiones para el Updater. |
-| `https://github.com/Cadiducho/40ServidoresMC/releases` | Descargas/changelog de releases. |
+| `https://github.com/richicru/40ServidoresMC/releases` | Descargas/changelog de releases de este fork. |
 | bStats (id `3909`) | Métricas de uso. |
 
 ## 10. Trabajo pendiente / conocido (TODOs en el código)
 
 - Tab-complete de comandos (`CSCommand.tabCompleteCommand` es un stub).
-- Branch del Updater fijado a `dev` (ver TODO en `Updater.fetchUpdate`).
-- PlaceholderAPI: hook registrado pero sin placeholders implementados.
+- Branch del Updater fijado a `dev` por defecto (configurable vía `update-repo`/`update-branch`
+  desde v3.0; ver `Updater.fetchUpdate`).
 - Soporte de Sponge API 8 y BungeeCord previsto (módulos comentados en `settings.gradle`).
+- `sponge/` (módulo Sponge clásico, sin API7) sigue deshabilitado (`//include 'sponge'` en
+  `settings.gradle`) y sin sus dependencias de SpongeAPI configuradas — no compila si se
+  reactiva tal cual. Usa `sponge/api7/` en su lugar.

@@ -39,14 +39,15 @@ cd 40ServidoresMC
 
 ```bash
 ./gradlew :bukkit:shadowJar      # JAR de Bukkit
-./gradlew :sponge:api7:shadowJar # JAR de Sponge
+./gradlew :sponge-api7:shadowJar # JAR de Sponge (nombre de tarea desde v3.1.2; antes :sponge:api7)
 ./gradlew build                   # Compilar todo
 ```
 
-Los JARs resultantes aparecen en:
+Los JARs resultantes aparecen en (sustituye `<version>` por la versión actual,
+ver [CHANGELOG.md](../../CHANGELOG.md)):
 
-- `bukkit/build/libs/40ServidoresMC-3.0-Bukkit.jar`
-- `sponge/api7/build/libs/40ServidoresMC-3.0-Sponge-API7.jar`
+- `bukkit/build/libs/40ServidoresMC-<version>-Bukkit.jar`
+- `sponge/api7/build/libs/40ServidoresMC-<version>-Sponge-API7.jar`
 
 ## Tests
 
@@ -54,18 +55,13 @@ Los JARs resultantes aparecen en:
 ./gradlew :common:test
 ```
 
-74 tests cubren el núcleo del plugin:
-
-- Cooldown (6)
-- VoteStatus deserialization (8)
-- ServerStats parsing (7)
-- UpdaterInfo (6)
-- CSCommand authorization (7)
-- ApiClient HTTP (8)
-- VoteCMD flow (8)
-- StatsCMD flow (5)
-- MessageKey catalog (8)
-- StatsCache (7)
+144 tests cubren el núcleo del plugin (protocolo v2 y v3, IP sanitizada,
+circuit breaker/rate limit, cooldown, comandos, caché, mensajes...) -- ver el
+inventario completo y por qué no bastan por sí solos en
+[`docs/SPEC.md` §8](../SPEC.md#8-pruebas). Para probar `/voto40` con un
+jugador real contra Paper y Folia (necesario para pillar bugs de scheduler,
+que los tests unitarios no pueden ver), usa `scripts/test-vote-e2e-real.sh`
+-- ver [`docs/testing/Local-Test-Setup.md`](../testing/Local-Test-Setup.md).
 
 ## Linting
 

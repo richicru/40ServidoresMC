@@ -3,5 +3,20 @@ rootProject.name = '40ServidoresMC'
 include 'common'
 include 'bukkit'
 //include 'sponge'
-include 'sponge:api7'
+
+// 'sponge:api7' (con ':') haria que Gradle resucitara ':sponge' como proyecto
+// PADRE real con projectDir='sponge/' -- y esa carpeta SI tiene un
+// build.gradle propio y fuentes (el modulo Sponge classico, deshabilitado a
+// proposito arriba). El bloque `subprojects{ apply plugin: 'java' ... }` del
+// build.gradle raiz se aplica a CUALQUIER proyecto que Gradle conozca,
+// incluidos los "padre" creados solo implicitamente por un path anidado, asi
+// que ':sponge' acababa compilandose de verdad pese al //include comentado
+// -- roto desde siempre (le faltan TODAS sus dependencias de Sponge API,
+// ver sponge/build.gradle) y por eso ./gradlew test fallaba entero con 22
+// errores de compilacion ajenos a cualquier cambio en bukkit/common
+// (descubierto 2026-09-06, la primera vez que alguien corrio la suite completa
+// en este entorno). Nombre plano + projectDir explicito evita la
+// auto-vivificacion del padre sin mover ni un fichero de sitio.
+include 'sponge-api7'
+project(':sponge-api7').projectDir = file('sponge/api7')
 //include 'sponge:api8'

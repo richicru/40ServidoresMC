@@ -148,52 +148,87 @@ public class BukkitPlugin extends JavaPlugin implements CSPlugin {
      * Ejecutar un comando de consola delegando al scheduler correcto y devuelve
      * si se pudo despachar y ejecutar sin error.
      *
-     * <p>Si Folia: {@code GlobalRegionScheduler} (la consola no pertenece a una región).</p>
-     * <p>Si clásico: main thread scheduler.</p>
+     * <p><b>Bug real corregido 2026-09-06</b> (detectado por el operador de
+     * 40servidoresmc.es antes de publicar v3.1.1): la versión anterior SIEMPRE
+     * devolvía {@code false}, sin importar si el comando funcionaba. Programaba
+     * {@code r} vía {@code runTask()}/{@code GlobalRegionScheduler.run()} —que
+     * NUNCA ejecutan inline, ni siquiera llamados desde el main thread; como
+     * poco esperan al siguiente tick— y devolvía {@code result[0]} justo
+     * después, antes de que {@code r} llegara a correr. El comando SÍ se
+     * despachaba (un tick más tarde), pero el método mentía sobre el
+     * resultado.
+     *
+     * <p>Consecuencia real: {@code dispatchRewards()} (VoteCMD) siempre veía
+     * {@code allOk=false} → el ack de v3 siempre viajaba con
+     * {@code entregado:false} → el server SIEMPRE liberaba la reserva del
+     * voto → el mismo voto volvía a ofrecerse en el siguiente
+     * {@code /voto40}. Un jugador podía cobrar el mismo voto web una y otra
+     * vez sin límite, exactamente lo contrario de lo que v3 se diseñó para
+     * evitar. Ningún test lo detectó porque los 140 unitarios mockean este
+     * método (siempre {@code true}) y el suite de Docker sólo golpea el mock
+     * HTTP, nunca ejecuta {@code /voto40} de verdad contra un Paper/Folia real
+     * (ver {@code scripts/test-vote-scenarios.sh}, escenario marcado como
+     * manual).
+     *
+     * <p>La corrección: si ya estamos en un thread síncrono válido
+     * (comprobado con {@link Bukkit#isPrimaryThread()} — cierto siempre en
+     * Bukkit/Paper clásico, y cierto en Folia sólo para el hilo de la región
+     * global), ejecutamos directo, sin reprogramar nada, y el resultado es
+     * real. Si no (Folia: llamado desde el {@code EntityScheduler} de un
+     * jugador, que NO es el hilo primario), aplicamos el mismo patrón
+     * bloqueante que ya usa {@link #runSyncForPlayerWithResult} más abajo:
+     * programar y esperar con un {@code CountDownLatch} hasta tener el
+     * resultado real, en vez de leerlo antes de tiempo.</p>
      */
     @Override
     public boolean dispatchCommand(final String command) {
-        // Para detectar éxito/fracaso necesitamos esperar el resultado. En Bukkit
-        // clásico usamos un AtomicReference. En Folia bloqueamos (no hay riesgo,
-        // el thread I/O no es la región del jugador).
+        // OJO: en Folia, Bukkit.isPrimaryThread() NO significa "seguro para
+        // despachar un comando de consola" -- devuelve true tambien dentro
+        // del thread de region de un jugador (llamado desde
+        // runOnEntityScheduler(), el caso real de dispatchRewards()), pero
+        // Folia exige el thread de la REGION GLOBAL especificamente para
+        // comandos de consola. Bug real corregido 2026-09-06, verificado con
+        // un Folia real: la version anterior tomaba este atajo tambien en
+        // Folia y Bukkit.dispatchCommand() lanzaba "Dispatching command
+        // async" en cada /voto40 (el premio no se entregaba nunca). En
+        // Folia SIEMPRE se pasa por runOnGlobalScheduler(); el atajo directo
+        // queda solo para clasico, donde isPrimaryThread() si es inequivoco.
+        if (!folia && Bukkit.isPrimaryThread()) {
+            return runConsoleCommand(command);
+        }
+
         final boolean[] result = {false};
+        final java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(1);
         Runnable r = () -> {
             try {
-                result[0] = Bukkit.dispatchCommand(Bukkit.getConsoleSender(), command);
-            } catch (Throwable t) {
-                getLogger().log(java.util.logging.Level.WARNING,
-                        "Comando '" + command + "' lanzó excepción: " + t.getMessage());
-                result[0] = false;
+                result[0] = runConsoleCommand(command);
+            } finally {
+                latch.countDown();
             }
         };
         if (folia) {
-            try {
-                Object scheduler = Bukkit.class.getMethod("getGlobalRegionScheduler").invoke(null);
-                scheduler.getClass()
-                        .getMethod("run", org.bukkit.plugin.Plugin.class, java.util.function.Consumer.class, Runnable.class)
-                        .invoke(scheduler, this, CANCEL_TASK_SILENTLY, r);
-            } catch (Throwable t) {
-                getServer().getScheduler().runTask(this, r);
-            }
+            runOnGlobalScheduler(r);
         } else {
             getServer().getScheduler().runTask(this, r);
         }
-        // En Folia el task es asíncrono y todavía no terminó; en clásico ya terminó.
-        // Como callers como VoteCMD invocan dispatchCommand DENTRO de runSyncForPlayer
-        // (que es síncrono), para Folia necesitamos una variante que espere. Aquí,
-        // cómo callers hacen dispatch dentro de runSyncForPlayerWithResult (que ya
-        // espera), basta con retornar el resultado síncrono cuando se pueda. Para
-        // Folia puro, el caller debería usar dispatchAndWaitCommand; lo dejamos
-        // documentado.
-        if (!folia) {
-            return result[0];
+        try {
+            latch.await();
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            return false;
         }
-        // En Folia, dispatchCommand se llama normalmente desde dentro del entity
-        // scheduler (region thread); eso es síncrono. Aquí lo único que
-        // retornamos es el resultado del call que acabamos de hacer; si el caller
-        // está FUERA del entity scheduler (poco probable), el comando aún no
-        // habrá terminado.
         return result[0];
+    }
+
+    /** Ejecuta el comando de consola de verdad. Debe llamarse ya en un thread válido. */
+    private boolean runConsoleCommand(String command) {
+        try {
+            return Bukkit.dispatchCommand(Bukkit.getConsoleSender(), command);
+        } catch (Throwable t) {
+            getLogger().log(java.util.logging.Level.WARNING,
+                    "Comando '" + command + "' lanzó excepción: " + t.getMessage());
+            return false;
+        }
     }
 
     /**
@@ -205,16 +240,7 @@ public class BukkitPlugin extends JavaPlugin implements CSPlugin {
             // En Folia, BroadcastUtils.broadcastMessage sería lo ideal, pero como no existe
             // en Paper API 1.20.x en versiones antiguas, iteramos manualmente enroutando.
             for (Player p : Bukkit.getOnlinePlayers()) {
-                try {
-                    Object scheduler = p.getClass().getMethod("getScheduler").invoke(p);
-                    Runnable send = () -> p.sendMessage(ChatColor.translateAlternateColorCodes('&', message));
-                    scheduler.getClass()
-                            .getMethod("run", org.bukkit.plugin.Plugin.class, java.util.function.Consumer.class, Runnable.class)
-                            .invoke(scheduler, this, CANCEL_TASK_SILENTLY, send);
-                } catch (Throwable t) {
-                    // Fallback a main thread
-                    Bukkit.getScheduler().runTask(this, sendColor(message, p));
-                }
+                runOnEntityScheduler(p, () -> p.sendMessage(ChatColor.translateAlternateColorCodes('&', message)));
             }
             return;
         }
@@ -264,7 +290,7 @@ public class BukkitPlugin extends JavaPlugin implements CSPlugin {
             task.run();
             return;
         }
-        scheduleForEntity(p, task);
+        runOnEntityScheduler(p, task);
     }
 
     /**
@@ -307,22 +333,30 @@ public class BukkitPlugin extends JavaPlugin implements CSPlugin {
         // Folia: usamos entity scheduler vía reflection + CompletableFuture para
         // esperar el resultado. No podemos bloquear el thread principal pero sí
         // el thread I/O (nunca es la región del jugador).
+        final java.util.concurrent.CompletableFuture<T> fut = new java.util.concurrent.CompletableFuture<>();
+        boolean scheduled = runOnEntityScheduler(p, () -> {
+            try {
+                fut.complete(task.get());
+            } catch (Throwable t) {
+                fut.completeExceptionally(t);
+            }
+        });
+        if (!scheduled) {
+            // El jugador se retiró (se desconectó) antes de que le tocara turno,
+            // o el EntityScheduler no está disponible (Folia demasiado viejo).
+            // Sin esto, `fut.get()` bloquearía este thread PARA SIEMPRE: es
+            // exactamente el bug real de 2026-09-06 (dos hilos de
+            // cservidoresmc-io colgados sin límite en fut.get(), verificado con
+            // un thread dump contra un Folia real) -- runOnEntityScheduler()
+            // pasaba el trabajo real como callback de "retirado" en vez de
+            // como el trabajo, así que nunca se ejecutaba mientras el jugador
+            // siguiera conectado (el caso normal).
+            return task.get();
+        }
         try {
-            final java.util.concurrent.CompletableFuture<T> fut = new java.util.concurrent.CompletableFuture<>();
-            final Object scheduler = p.getClass().getMethod("getScheduler").invoke(p);
-            final java.lang.reflect.Method runMethod = scheduler.getClass()
-                    .getMethod("run", org.bukkit.plugin.Plugin.class, java.util.function.Consumer.class, Runnable.class);
-            runMethod.invoke(scheduler, this, CANCEL_TASK_SILENTLY, (Runnable) () -> {
-                try {
-                    fut.complete(task.get());
-                } catch (Throwable t) {
-                    fut.completeExceptionally(t);
-                }
-            });
             return fut.get();
         } catch (Throwable t) {
-            // Folia scheduler no disponible (versión antigua) — fallback síncrono.
-            return task.get();
+            return null;
         }
     }
 
@@ -338,14 +372,7 @@ public class BukkitPlugin extends JavaPlugin implements CSPlugin {
             getServer().getScheduler().runTask(this, task);
             return;
         }
-        try {
-            Object scheduler = Bukkit.class.getMethod("getGlobalRegionScheduler").invoke(null);
-            scheduler.getClass()
-                    .getMethod("run", org.bukkit.plugin.Plugin.class, java.util.function.Consumer.class, Runnable.class)
-                    .invoke(scheduler, this, CANCEL_TASK_SILENTLY, task);
-        } catch (Throwable t) {
-            getServer().getScheduler().runTask(this, task);
-        }
+        runOnGlobalScheduler(task);
     }
 
     @Override
@@ -361,30 +388,82 @@ public class BukkitPlugin extends JavaPlugin implements CSPlugin {
         }
         // Folia: enrutar a cada EntityScheduler
         for (Player p : Bukkit.getOnlinePlayers()) {
-            scheduleForEntity(p, () -> action.accept(new BukkitCommandSender(p, this)));
+            runOnEntityScheduler(p, () -> action.accept(new BukkitCommandSender(p, this)));
         }
     }
 
     /**
-     * Agenda una tarea en el EntityScheduler del jugador (Folia).
-     * Si algo va mal (sin Folia, etc.), cae al main thread.
+     * Agenda {@code task} en el {@code EntityScheduler} de {@code player} (Folia).
+     *
+     * <p><b>Bug real corregido 2026-09-06</b> (detectado con un thread dump
+     * contra un Folia real: dos hilos de {@code cservidoresmc-io} bloqueados
+     * para siempre en {@code fut.get()}, ver
+     * {@link #runSyncForPlayerWithResult}): la firma real de
+     * {@code EntityScheduler.run} (verificada extrayendo la clase del propio
+     * jar de Folia, no de memoria) es</p>
+     * <pre>
+     * ScheduledTask run(Plugin plugin, Consumer&lt;ScheduledTask&gt; task, Runnable retired)
+     * </pre>
+     * <p>El trabajo real va en el {@code Consumer} (2º parámetro); el
+     * {@code Runnable} (3º) es "retired" -- SOLO se ejecuta si la entidad se
+     * retira (jugador se desconecta) ANTES de que le toque turno. La versión
+     * anterior los tenía invertidos: pasaba un no-op como el trabajo real y
+     * el trabajo real como "retired", así que mientras el jugador siguiera
+     * conectado (el caso normal) NUNCA se ejecutaba nada.</p>
+     *
+     * @return true si se programó en el EntityScheduler de verdad (Folia
+     *         disponible); false si tocó el fallback al scheduler clásico
+     *         (jugador retirado antes de programar, o Folia no disponible) --
+     *         el caller debe entonces asumir que {@code task} pudo NO
+     *         haberse ejecutado todavía de forma síncrona con esta llamada.
      */
-    private void scheduleForEntity(Player player, Runnable task) {
+    private boolean runOnEntityScheduler(Player player, Runnable task) {
         try {
             Object scheduler = player.getClass().getMethod("getScheduler").invoke(player);
-            scheduler.getClass()
+            java.util.function.Consumer<Object> realWork = scheduledTask -> task.run();
+            Object scheduled = scheduler.getClass()
                     .getMethod("run", org.bukkit.plugin.Plugin.class, java.util.function.Consumer.class, Runnable.class)
-                    .invoke(scheduler, this, CANCEL_TASK_SILENTLY, task);
+                    .invoke(scheduler, this, realWork, RETIRED_NOOP);
+            // run() devuelve null si la entidad ya estaba retirada -- Folia
+            // documenta esto como "no se programó, ejecuta tu propio fallback".
+            if (scheduled == null) {
+                getServer().getScheduler().runTask(this, task);
+                return false;
+            }
+            return true;
+        } catch (Throwable t) {
+            getServer().getScheduler().runTask(this, task);
+            return false;
+        }
+    }
+
+    /**
+     * Agenda {@code task} en el {@code GlobalRegionScheduler} (Folia): consola,
+     * updater, broadcasts que no pertenecen a ningún jugador concreto.
+     *
+     * <p>Bug real corregido 2026-09-06 (mismo día que {@link #runOnEntityScheduler}):
+     * la firma real de {@code GlobalRegionScheduler.run} (verificada contra el
+     * jar real) es {@code ScheduledTask run(Plugin plugin, Consumer<ScheduledTask> task)}
+     * -- SOLO DOS parámetros, sin "retired" (no tiene sentido para un scheduler
+     * que no pertenece a una entidad que pueda retirarse). El código buscaba
+     * este método con TRES parámetros (arrastrado del patrón de
+     * EntityScheduler, que sí lleva "retired"); esa búsqueda por reflection
+     * fallaba SIEMPRE con NoSuchMethodException y caía al scheduler clásico
+     * de Bukkit -- que Folia rechaza activamente (UnsupportedOperationException),
+     * así que esta rama nunca llegó a funcionar en un Folia real.</p>
+     */
+    private void runOnGlobalScheduler(Runnable task) {
+        try {
+            Object scheduler = Bukkit.class.getMethod("getGlobalRegionScheduler").invoke(null);
+            java.util.function.Consumer<Object> realWork = scheduledTask -> task.run();
+            scheduler.getClass()
+                    .getMethod("run", org.bukkit.plugin.Plugin.class, java.util.function.Consumer.class)
+                    .invoke(scheduler, this, realWork);
         } catch (Throwable t) {
             getServer().getScheduler().runTask(this, task);
         }
     }
 
-    private static Runnable sendColor(String message, Player p) {
-        return () -> p.sendMessage(ChatColor.translateAlternateColorCodes('&', message));
-    }
-
-    /** Consumer que ignora la cancelación de la tarea (para schedulers Folia). */
-    @SuppressWarnings("unchecked")
-    private static final java.util.function.Consumer<Object> CANCEL_TASK_SILENTLY = t -> {};
+    /** "Retired" no-op para EntityScheduler.run(): no hacemos nada especial si la entidad se retira antes de su turno. */
+    private static final Runnable RETIRED_NOOP = () -> {};
 }

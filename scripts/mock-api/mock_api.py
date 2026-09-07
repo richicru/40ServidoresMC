@@ -440,13 +440,24 @@ class MockHandler(BaseHTTPRequestHandler):
                 payload_obj = {}
             ids = payload_obj.get("votos", [])
             entregado = bool(payload_obj.get("entregado", False))
+            # `entregado` en la respuesta ECOA lo que mandó el cliente, igual
+            # que hace el server real (`jsonV3($result + ['entregado' => $delivered])`
+            # en VoteApiController). Antes del 2026-09-06 este mock devolvía
+            # SIEMPRE `True` sin mirar el body. No llegaba a esconder el bug
+            # de dispatchCommand (VoteCMD.onAckReceived() vuelve a mirar el
+            # `delivered` LOCAL del cliente, no ack.entregado(), así que el
+            # jugador veía "no pudimos entregar tu premio" de todos modos),
+            # pero sí desviaba las ramas internas (onAckReceived vs
+            # onAckFailed) y los logs de consola que dependen de
+            # ack.isEntregado(), reduciendo la fidelidad del test frente al
+            # server real sin necesidad.
             resp = {
                 "api_version": 3,
                 "confirmados": ids if entregado else [],
                 "ya_confirmados": [],
                 "liberados": [] if entregado else ids,
                 "desconocidos": [],
-                "entregado": True,
+                "entregado": entregado,
             }
             self._send_body(200, json.dumps(resp).encode("utf-8"), "application/json")
             return

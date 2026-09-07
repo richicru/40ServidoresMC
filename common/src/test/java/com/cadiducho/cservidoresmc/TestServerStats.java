@@ -14,6 +14,45 @@ class TestServerStats {
 
     private final Gson gson = new Gson();
 
+    /**
+     * Formato de cable REAL de 40servidoresmc.es (VoteApiController::stats(),
+     * ver su comentario "'recompensado' va como STRING, no como entero"): el
+     * plugin oficial hace `Integer.parseInt((String) object.get("recompensado"))`
+     * con org.json.simple, así que el server manda `"recompensado": "1"`
+     * ENTRE COMILLAS a propósito, no `"recompensado": 1`.
+     *
+     * `ServerVote.recompensado` es un `int`, no un `String`. Esto funciona
+     * porque `Gson.JsonReader.nextInt()` es tolerante: si el token es un
+     * STRING que parsea como número, lo acepta igual. Pero hasta este test
+     * nadie lo probaba contra los bytes reales -- todos los demás tests usan
+     * `"recompensado": 1` sin comillas (número) o reflexión directa sobre el
+     * campo, ninguno de los dos ejercita el parseo real de Gson sobre el
+     * formato que el server manda de verdad. Si algún día cambia el tipo del
+     * campo (p. ej. a `Boolean`), este test es el que lo detecta.
+     */
+    @Test
+    void parseRecompensadoAsQuotedStringLikeTheRealServerSends() {
+        String json = "{\n" +
+                "  \"nombre\": \"MiServidor\",\n" +
+                "  \"puesto\": 7,\n" +
+                "  \"votoshoy\": 1,\n" +
+                "  \"votoshoypremiados\": 1,\n" +
+                "  \"votossemanales\": 1,\n" +
+                "  \"votossemanalespremiados\": 1,\n" +
+                "  \"ultimos20votos\": [\n" +
+                "    {\"usuario\": \"alice\", \"recompensado\": \"1\"},\n" +
+                "    {\"usuario\": \"bob\", \"recompensado\": \"0\"}\n" +
+                "  ]\n" +
+                "}";
+
+        ServerStats stats = gson.fromJson(json, ServerStats.class);
+
+        assertNotNull(stats);
+        assertEquals(2, stats.getLastVotes().size());
+        assertTrue(stats.getLastVotes().get(0).isRewarded(), "\"1\" (string) debe parsear como recompensado=true");
+        assertFalse(stats.getLastVotes().get(1).isRewarded(), "\"0\" (string) debe parsear como recompensado=false");
+    }
+
     @Test
     void parseFullServerStats() {
         String json = "{\n" +

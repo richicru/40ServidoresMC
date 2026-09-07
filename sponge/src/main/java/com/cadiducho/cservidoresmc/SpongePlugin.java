@@ -81,8 +81,22 @@ public class SpongePlugin implements CSPlugin {
     }
 
     @Override
-    public void dispatchCommand(String command) {
-        Sponge.getCommandManager().process(Sponge.getServer().getConsole(), command);
+    public boolean dispatchCommand(String command) {
+        // Módulo excluido del build activo (ver settings.gradle: "//include
+        // 'sponge'"; vive sponge/api7 en su lugar). Se corrige igualmente la
+        // firma 2026-09-06: CSPlugin.dispatchCommand() es `boolean` desde
+        // v3.1.0 y esto no compilaría si algún día se reactiva. A diferencia
+        // de BukkitPlugin (que necesitó reprogramar en el scheduler
+        // correcto), Sponge.getCommandManager().process() ya es síncrono, así
+        // que basta con leer su resultado real -- ver sponge/api7 para la
+        // versión mantenida de este mismo patrón.
+        try {
+            int success = Sponge.getCommandManager().process(Sponge.getServer().getConsole(), command)
+                    .getSuccessCount().orElse(0);
+            return success > 0;
+        } catch (Throwable t) {
+            return false;
+        }
     }
 
     @Override

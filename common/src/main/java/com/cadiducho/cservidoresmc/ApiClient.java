@@ -109,6 +109,21 @@ public class ApiClient {
         return circuitBreaker;
     }
 
+    /**
+     * Executor de I/O de este cliente (2 hilos dedicados, ver
+     * {@link #defaultIoExecutor()}). Expuesto para que VoteCMD pueda encadenar
+     * ahí el trabajo de "entregar premio + ackear" en vez de dejar que
+     * {@code CompletableFuture.runAsync(...)} caiga en
+     * {@code ForkJoinPool.commonPool()} -- el pool compartido de TODA la JVM,
+     * usado también por otros plugins. Bloquear un hilo de ese pool compartido
+     * esperando un tick del scheduler de Bukkit (como hace
+     * {@code runSyncForPlayerWithResult}) puede dejar sin hilos disponibles a
+     * cualquier otro código que dependa de él durante un pico de votos.
+     */
+    public ExecutorService getIoExecutor() {
+        return ioExecutor;
+    }
+
     // ============================================================
     //  v2 — flujo legacy con /api2.php
     // ============================================================

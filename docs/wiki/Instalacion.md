@@ -12,8 +12,12 @@
 
 Descarga la última versión desde la página de [Releases](https://github.com/richicru/40ServidoresMC/releases).
 
-Para **Bukkit/Spigot/Paper/Purpur**: `40ServidoresMC-3.0-Bukkit.jar`
-Para **Sponge**: `40ServidoresMC-3.0-Sponge-API7.jar`
+Para **Bukkit/Spigot/Paper/Purpur/Folia**: `40ServidoresMC-<version>-Bukkit.jar`
+Para **Sponge**: `40ServidoresMC-<version>-Sponge-API7.jar`
+
+(`<version>` es la última etiquetada en [Releases](https://github.com/richicru/40ServidoresMC/releases) --
+ver [CHANGELOG.md](https://github.com/richicru/40ServidoresMC/blob/master/CHANGELOG.md)
+para lo que trae cada una.)
 
 ### 2. Instala en tu servidor
 
@@ -22,7 +26,7 @@ Copia el JAR descargado en la carpeta `plugins/` de tu servidor:
 ```
 mi-servidor/
 ├── plugins/
-│   └── 40ServidoresMC-3.0-Bukkit.jar
+│   └── 40ServidoresMC-<version>-Bukkit.jar
 ├── server.jar
 └── ...
 ```

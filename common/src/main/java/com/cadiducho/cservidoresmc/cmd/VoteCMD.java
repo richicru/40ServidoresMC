@@ -16,6 +16,9 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.time.OffsetDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -106,11 +109,10 @@ public class VoteCMD extends CSCommand {
                                 "https://www.40servidoresmc.es/");
                     } else {
                         // Ya canjeó. Mostramos cuándo puede volver a votar.
-                        String sig = pending.getSiguienteVoto() == null ? "—" : pending.getSiguienteVoto();
                         sender.sendMessageWithTag(MessageKey.VOTE_V3_ALREADY_REWARDED.resolve(
-                                plugin.getCSConfiguration(), "siguiente_voto", sig));
+                                plugin.getCSConfiguration(), "siguiente_voto", formatSiguienteVoto(pending.getSiguienteVoto())));
                     }
-                }));
+                }), plugin.getApiClient().getIoExecutor());
     }
 
     /**
@@ -167,7 +169,7 @@ public class VoteCMD extends CSCommand {
                         plugin.runSyncForPlayer(nick, () -> onAckFailed(plugin, sender, delivered));
                         return null;
                     });
-        });
+        }, plugin.getApiClient().getIoExecutor());
     }
 
     /**
@@ -176,6 +178,21 @@ public class VoteCMD extends CSCommand {
      * NO mandamos IP — el server rechazaría el cruce en cada voto y haría parecer
      * fraudulento al servidor entero.
      */
+    /**
+     * "2026-09-07T06:57:40+02:00" -> "07/09 06:57". Si no parsea (formato
+     * inesperado, null), devolvemos el valor tal cual en vez de esconder la
+     * información -- mejor una fecha fea que ninguna fecha.
+     */
+    private String formatSiguienteVoto(String iso) {
+        if (iso == null || iso.isEmpty()) return "—";
+        try {
+            OffsetDateTime dt = OffsetDateTime.parse(iso);
+            return dt.format(DateTimeFormatter.ofPattern("dd/MM HH:mm"));
+        } catch (DateTimeParseException e) {
+            return iso;
+        }
+    }
+
     private String computeUserIp(CSPlugin plugin, String nick) {
         String raw = plugin.getPlayerIp(nick);
         if (raw == null) return "";
@@ -206,11 +223,6 @@ public class VoteCMD extends CSCommand {
                     sender.getName(), ip != null ? ip : "unknown"));
         }
         return allOk;
-    }
-
-    private String computeIpHash(CSPlugin plugin, String nick) {
-        // No-op: el método legacy computeIpHash ya no se usa (computeUserIp lo reemplaza).
-        return "";
     }
 
     /**

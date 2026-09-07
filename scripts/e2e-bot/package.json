@@ -1,0 +1,8 @@
+{
+  "name": "40smc-plugin-e2e-bot",
+  "private": true,
+  "description": "Bot de protocolo real (mineflayer) para probar /voto40 contra un Paper/Folia real del stack de test, sin cliente grafico. Ver scripts/test-vote-e2e-real.sh.",
+  "dependencies": {
+    "mineflayer": "^4.20.1"
+  }
+}

@@ -23,6 +23,7 @@ anuncia el voto al resto del servidor.
 
 - ✅ Soporte para **Bukkit / Spigot / Paper / Purpur / Pufferfish / Leaf** y derivados
 - ✅ Soporte para **Sponge API 7**
+- ✅ Soporte para **Folia** (Paper multithreaded regionizado, desde v3.0.2)
 - ✅ Compatible con proxies **Velocity / BungeeCord / Waterfall** (se ejecuta en el backend)
 - ✅ Recompensas configurables con placeholders (`{0}` = jugador)
 - ✅ Mensajes traducibles vía `messages.*` en config
@@ -34,10 +35,12 @@ anuncia el voto al resto del servidor.
 
 ## Sobre el fork
 
-Esta versión (3.0) está mantenida por [@richicru](https://github.com/richicru).
-El plugin original fue desarrollado por [Cadiducho](https://github.com/Cadiducho)
-hasta la versión 2.5. Este fork continúa el trabajo añadiendo compatibilidad con
-servidores modernos, corrección de bugs, tests y documentación.
+Este fork lo mantiene [@richicru](https://github.com/richicru) desde la
+versión 3.0 (ver [CHANGELOG.md](https://github.com/richicru/40ServidoresMC/blob/master/CHANGELOG.md)
+para la versión actual y el historial completo). El plugin original fue
+desarrollado por [Cadiducho](https://github.com/Cadiducho) hasta la versión
+2.5. Este fork continúa el trabajo añadiendo compatibilidad con servidores
+modernos, corrección de bugs, tests y documentación.
 
 ## Soporte
 

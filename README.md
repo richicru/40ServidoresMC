@@ -55,7 +55,7 @@ Más detalles en [docs/SERVERS.md](docs/SERVERS.md).
 git clone https://github.com/richicru/40ServidoresMC.git
 cd 40ServidoresMC
 ./gradlew :bukkit:shadowJar
-./gradlew :sponge:api7:shadowJar
+./gradlew :sponge-api7:shadowJar
 ```
 
 Los JARs resultantes aparecen en `bukkit/build/libs/` y `sponge/api7/build/libs/`.
@@ -66,7 +66,12 @@ Los JARs resultantes aparecen en `bukkit/build/libs/` y `sponge/api7/build/libs/
 ./gradlew :common:test
 ```
 
-74 tests unitarios cubren el núcleo del plugin (modelos, comandos, cliente HTTP, caché, cooldown).
+144 tests unitarios cubren el núcleo del plugin (modelos, comandos, cliente HTTP, caché,
+cooldown, protocolo v3, IP sanitizada, reintento de acks). Se complementan con un entorno
+de test end-to-end contra Paper y Folia reales (ver [docs/testing/Local-Test-Setup.md](docs/testing/Local-Test-Setup.md)
+y `scripts/test-vote-e2e-real.sh`, que conecta un jugador real vía protocolo para probar
+`/voto40` de principio a fin — los tests unitarios y el mock HTTP por sí solos no cubren
+los schedulers de Folia ni el resultado real de `dispatchCommand`).
 
 ## Documentación
 

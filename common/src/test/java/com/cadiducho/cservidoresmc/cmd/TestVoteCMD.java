@@ -49,6 +49,16 @@ class TestVoteCMD {
                 .set("comandosCustom", Collections.singletonList("give {0} diamond 1"));
 
         apiClient = mock(ApiClient.class);
+        // VoteCMD encadena el trabajo de entrega+ack con
+        // plugin.getApiClient().getIoExecutor() (2026-09-06: antes caía en
+        // ForkJoinPool.commonPool(), ver docblock de getIoExecutor()). Sin
+        // este stub, un mock plano de ApiClient devuelve null y
+        // CompletableFuture.runAsync(r, null) revienta con NPE síncrono antes
+        // de que se ejecute nada del flujo. Ejecutor "directo" (mismo hilo):
+        // hace los tests deterministas, sin depender de que el
+        // Thread.sleep(200) de cada test alcance a una tarea de fondo real.
+        when(apiClient.getIoExecutor())
+                .thenReturn(com.google.common.util.concurrent.MoreExecutors.newDirectExecutorService());
 
         plugin = mock(CSPlugin.class);
         when(plugin.getCSConfiguration()).thenReturn(configuration);
@@ -150,8 +160,33 @@ class TestVoteCMD {
 
         verify(plugin, never()).dispatchCommand(anyString());
         verify(apiClient, never()).sendAck(any(), any(), anyBoolean(), anyString());
-        assertTrue(carol.sentMessages.stream().anyMatch(m -> m.contains("2026-09-07")),
-                "Debe incluir la fecha de siguiente_voto en el mensaje");
+        // 2026-09-06: siguiente_voto se formatea para el chat (dd/MM HH:mm) en
+        // vez de mostrar el ISO 8601 crudo con offset ("2026-09-07T03:31:07+02:00"),
+        // feo para un mensaje de juego. Ver VoteCMD.formatSiguienteVoto().
+        assertTrue(carol.sentMessages.stream().anyMatch(m -> m.contains("07/09 03:31")),
+                "Debe incluir la fecha de siguiente_voto, formateada para el chat");
+    }
+
+    @Test
+    void emptyPending_cannotVoteYet_withUnparseableSiguienteVoto_showsRawValue() throws Exception {
+        // formatSiguienteVoto() debe degradar con gracia: si el server mandara
+        // algo que no es un ISO 8601 válido, mejor mostrar el valor crudo que
+        // ocultar la información o lanzar.
+        PendingVotesResponse pending = new PendingVotesResponse();
+        pending.setApiVersion(3);
+        pending.setJugador("dave");
+        pending.setVotosPendientes(Collections.emptyList());
+        pending.setPuedeVotarYa(false);
+        pending.setSiguienteVoto("no-es-una-fecha");
+        when(apiClient.fetchPendingVotes("dave")).thenReturn(CompletableFuture.completedFuture(pending));
+
+        MockCommandSender dave = MockCommandSender.player("dave");
+        cmd.execute(plugin, dave, "voto40", Collections.emptyList());
+
+        Thread.sleep(200);
+
+        assertTrue(dave.sentMessages.stream().anyMatch(m -> m.contains("no-es-una-fecha")),
+                "Un valor no parseable debe mostrarse tal cual, no ocultarse ni reventar");
     }
 
     @Test

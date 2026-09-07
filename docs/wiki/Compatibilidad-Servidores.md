@@ -12,7 +12,7 @@
 | **Glowstone** | ✅ | Implementación independiente de Bukkit. |
 | **Sponge API 7** | ✅ | Módulo separado `40ServidoresMC-Sponge-API7.jar`. |
 | **Velocity / BungeeCord / Waterfall** | ✅ | El plugin se ejecuta en el **backend**, no en el proxy. |
-| **Folia** | 🟡 | Pendiente. Plan detallado en [FOLIA.md](../FOLIA.md). |
+| **Folia** | ✅ | Soportado desde v3.0.2 (schedulers region-aware por reflection). Verificado con un jugador real vía protocolo, no sólo tests unitarios (ver `scripts/test-vote-e2e-real.sh`). |
 | **Mohist / Arclight / Banner / CatServer** | ⚠️ | Debería funcionar, no testeado en este fork. |
 | **Fabric / NeoForge** | ❌ | API distinta, fuera de alcance. |
 | **Nukkit / Bedrock Dedicated Server** | ❌ | Bedrock Edition, no soportado. |
@@ -41,6 +41,6 @@ Según el reporte de servidores de 40servidoresmc.es:
 - 44% usan proxy (Velocity/BungeeCord/Waterfall)
 - ~13% Paper/Purpur detectable (probablemente muchos más detrás de proxies)
 - ~14% modded (Forge/Fabric/NeoForge)
-- 0% Folia detectado a fecha de v3.0
+- 0% Folia detectado a fecha de v3.0 (**dato histórico, previo al soporte añadido en v3.0.2** -- no se ha vuelto a medir desde entonces)
 
 Ver [SERVERS.md](../SERVERS.md) para el análisis completo.

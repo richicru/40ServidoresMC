@@ -103,12 +103,33 @@ Esto permite que el mismo JAR funcione en cualquiera de las dos plataformas.
   detección runtime es esencial.
 - Si Spigot no expone el método, caemos al camino clásico sin errores.
 
+## Voto real end-to-end (jugador de verdad, no RCON ni mock por curl)
+
+`scripts/test-vote-e2e-real.sh` (2026-09-07) conecta un bot de protocolo real
+(mineflayer, `scripts/e2e-bot/`) a Paper y Folia como jugador de verdad —no
+consola, no RCON— y ejecuta `/voto40`. Es el único camino que ejercita
+`dispatchCommand()` y los schedulers de Folia de verdad: tres bugs críticos
+(dos de ellos exclusivos de Folia) sólo se manifestaban con un jugador real
+ejecutando el comando, y ni los 144 tests unitarios ni
+`test-vote-scenarios.sh` (que sólo golpea el mock HTTP con `curl`) los
+detectaban. Requiere el stack arriba y npm/Node para el bot (se instala solo
+la primera vez). Verifica tanto el mensaje real en el chat del jugador como
+el body real del `ack` que el plugin manda al server (`entregado:true`/`false`).
+
+```bash
+./scripts/test-vote-e2e-real.sh              # Paper + Folia, los 3 casos (éxito/ya canjeado/nunca votó)
+./scripts/test-vote-e2e-real.sh --paper-only
+./scripts/test-vote-e2e-real.sh --folia-only
+```
+
 ## Limitaciones conocidas
 
-- **No probamos un voto real end-to-end sin una clave de API real de 40servidoresmc.es**.
-  Las pruebas siguen siendo: arranque limpio + load del plugin sin excepciones.
-- **El validado se centra en el inicio**, porque es donde se ven las incompatibilidades
-  de thread/region. Las pruebas unitarias (100 en `common`) cubren la lógica de negocio.
+- **El validado de `test-validate.sh`/`test-vote-scenarios.sh` se centra en el
+  arranque y en el mock HTTP**, porque ahí se ven la mayoría de incompatibilidades
+  de thread/region. Las pruebas unitarias (144 en `common`) cubren la lógica de
+  negocio. Para el voto real de un jugador contra Paper/Folia, usa
+  `test-vote-e2e-real.sh` (arriba) — es lo que hace falta para pillar bugs de
+  scheduler o de `dispatchCommand()`.
 - **Modo creative + peaceful**: configurado así para evitar ticks del mundo. No afectan
   al test del plugin.
 - **Java 17**: Paper 1.20.4 requiere Java 17+; Folia también. Usamos `java-17-openjdk`

@@ -1,6 +1,6 @@
 name: 40ServidoresMC
 main: com.cadiducho.cservidoresmc.bukkit.BukkitPlugin
-version: 3.1.1
+version: 3.1.2
 author: Cadiducho
 api-version: 1.13
 description: Enlace para servidores de la web 40ServidoresMC!
@@ -9,6 +9,42 @@ softdepend: [PlaceholderAPI]
 # Antes se detectó la incompatibilidad usando Class.forName sobre RegionizedServer.
 # https://docs.papermc.io/paper/dev/folia-support/#mark-plugin-as-supported-on-folia
 folia-supported: true
+# Sin este bloque, Bukkit aplica su fallback real (PermissionDefault.OP) a
+# cualquier nodo de permiso no registrado: SOLO operadores podrian ejecutar
+# /voto40 en un servidor sin plugin de permisos. Eso contradice lo que la
+# propia documentacion del proyecto promete desde siempre (README.md,
+# docs/wiki/Comandos.md, docs/wiki/Instalacion.md: "40servidores.voto -- por
+# defecto, todos los jugadores"). Bug real, no cosmetico: sin este bloque, el
+# comando central del plugin -- el unico por el que existe -- esta roto por
+# defecto en cualquier instalacion nueva sin LuckPerms/PermissionsEx ya
+# configurado a mano (ver docs/wiki/Comandos.md, el propio ejemplo de LuckPerms
+# ahi solo tiene sentido si hace falta correrlo porque el default no alcanza).
+# Detectado 2026-09-06 revisando el proyecto con el checklist de la skill
+# minecraft-plugin-dev (ver .claude/skills/), verificado contra un Paper real:
+# un jugador sin operar recibia "No tienes permiso para usar este comando" en
+# /voto40 hasta que se le daba op manualmente.
+#
+# test40/stats40/actualizar40/recargar40 se quedan en default: op a proposito
+# -- la propia documentacion nunca promete "por defecto todos" para esos
+# cuatro, y su ejemplo de LuckPerms los concede aparte (grupo vip/admin), no
+# al grupo default.
+permissions:
+    40servidores.voto:
+        description: Validar el voto y recibir la recompensa
+        default: true
+    40servidores.stats:
+        description: Ver las estadisticas del servidor
+        default: op
+    40servidores.test:
+        description: Simular la entrega de premios
+        default: op
+    40servidores.actualizar:
+        description: Comprobar actualizaciones del plugin
+        default: op
+    40servidores.recargar:
+        description: Recargar la configuracion del plugin
+        default: op
+
 commands:
     vote40:
         description: Comando principal de 40ServidoresMC

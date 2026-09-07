@@ -5,6 +5,119 @@ Todos los cambios relevantes del plugin se documentan en este archivo.
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/),
 y este proyecto se adhiere a [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.2] - 2026-09-07
+
+### Corregido (críticos, detectados con un jugador real contra Paper/Folia — ver `scripts/test-vote-e2e-real.sh`)
+- **`dispatchCommand()` siempre devolvía `false` en Bukkit/Paper/Folia, sin
+  importar si el comando funcionaba.** Programaba el comando en el scheduler
+  (`runTask()` / `GlobalRegionScheduler.run()`, que nunca ejecutan inline, ni
+  siquiera desde el main thread) y leía el resultado **antes** de que
+  llegara a correr. Consecuencia real: `VoteCMD` siempre veía `allOk=false`
+  → el ack de v3 siempre viajaba con `entregado:false` → el servidor
+  liberaba la reserva del voto siempre → el mismo voto se podía volver a
+  cobrar sin límite ejecutando `/voto40` una y otra vez. Ningún test lo
+  detectaba porque los 144 unitarios mockean `dispatchCommand` y el suite de
+  Docker sólo golpeaba el mock HTTP con `curl`, nunca ejecutaba `/voto40` de
+  verdad con un jugador. Fix: ejecuta directo si ya estamos en un hilo
+  síncrono válido; si no, programa y espera con `CountDownLatch` hasta tener
+  el resultado real.
+- **Folia: `EntityScheduler.run()` recibía el trabajo real y el callback de
+  "retirado" invertidos.** La firma real (verificada extrayendo la clase del
+  jar de Folia, no de memoria) es
+  `run(Plugin, Consumer<ScheduledTask> task, Runnable retired)`: el trabajo
+  va en el `Consumer` (2º parámetro); el `Runnable` (3º) SOLO se ejecuta si
+  el jugador se desconecta antes de que le toque turno. El código tenía un
+  no-op en el parámetro que sí se ejecuta y el trabajo real en el que casi
+  nunca se ejecuta, así que mientras el jugador siguiera conectado (el caso
+  normal) no pasaba nada: cada `/voto40` en Folia se quedaba colgado para
+  siempre. Detectado con un thread dump real (`kill -QUIT`) contra un Folia
+  en Docker: dos hilos de `cservidoresmc-io` bloqueados sin límite en
+  `fut.get()`. Con dos votos desafortunados el plugin se quedaba sin hilos
+  de red hasta reiniciar.
+- **Folia: `GlobalRegionScheduler.run()` se llamaba con 3 argumentos cuando
+  la API real sólo tiene 2** (`run(Plugin, Consumer<ScheduledTask>)`, sin
+  "retirado" — no aplica a un scheduler que no pertenece a una entidad). La
+  búsqueda por reflection fallaba siempre con `NoSuchMethodException` y caía
+  al scheduler clásico de Bukkit, que Folia rechaza activamente.
+- **Folia: `Bukkit.isPrimaryThread()` no basta para saber si es seguro
+  despachar un comando de consola.** Devuelve `true` también dentro del
+  hilo de región de un jugador (el caso real de `dispatchRewards()`), pero
+  Folia exige el hilo de la región *global* específicamente. Sin este
+  ajuste, cada `/voto40` en Folia reventaba con `"Dispatching command
+  async"` y el premio nunca se entregaba. En Folia se pasa siempre por
+  `runOnGlobalScheduler()`; el atajo directo queda sólo para Bukkit/Paper
+  clásico.
+- **`plugin.yml` no declaraba ningún bloque `permissions:`.** Sin él, Bukkit
+  aplica su fallback real (`PermissionDefault.OP`) a cualquier nodo no
+  registrado: sólo los operadores podían ejecutar `/voto40` en un servidor
+  sin plugin de permisos ya configurado a mano — justo lo contrario de lo
+  que la documentación del proyecto promete desde siempre ("por defecto,
+  todos los jugadores"). El comando por el que existe el plugin estaba roto
+  por defecto en cualquier instalación nueva. `40servidores.voto` pasa a
+  `default: true`; `stats40`/`test40`/`actualizar40`/`recargar40` se quedan
+  en `default: op` (la propia documentación nunca prometió lo contrario
+  para esos cuatro). Verificado contra un Paper real: un jugador sin operar
+  ahora recibe su premio; sigue sin poder ejecutar `/test40`.
+
+### Corregido (menores)
+- **`PendingAckStore` no era thread-safe frente a escrituras concurrentes
+  sobre el mismo nick** (`computeIfAbsent(...).addAll(...)` sobre un
+  `ArrayList` plano — la inserción en el mapa es atómica, el `addAll` no).
+  Lista interior ahora es `CopyOnWriteArrayList`.
+- **`PendingAckStore` crecía sin límite**: un jugador cuyo ack falla y nunca
+  vuelve a votar se quedaba en el mapa para siempre. Cada entrada lleva
+  ahora su instante de creación y se purga tras 6 h sin reclamarse.
+- **`VoteCMD` usaba `ForkJoinPool.commonPool()`** (el pool compartido de
+  toda la JVM, con cualquier otro plugin) para el trabajo de entrega+ack vía
+  `CompletableFuture.runAsync(...)` sin executor explícito, bloqueando uno
+  de sus hilos mientras esperaba el scheduler de Bukkit. Ahora usa el
+  executor propio de `ApiClient` (`getIoExecutor()`, nuevo getter).
+- **`siguiente_voto` se mostraba como ISO 8601 crudo en el chat**
+  (`2026-09-07T06:57:40+02:00`). Ahora se formatea `dd/MM HH:mm` para el
+  jugador; si no parsea, se muestra el valor tal cual en vez de ocultarlo.
+- **`settings.gradle` revivía por accidente el módulo `sponge` (Sponge
+  clásico, deshabilitado a propósito, roto desde siempre por faltarle todas
+  sus dependencias).** `include 'sponge:api7'` fuerza a Gradle a crear un
+  proyecto padre real `:sponge` con `projectDir=sponge/` — y esa carpeta sí
+  tiene su propio `build.gradle` y fuentes. El bloque `subprojects{ apply
+  plugin: 'java' ... }` de la raíz se aplica a cualquier proyecto que Gradle
+  conozca, así que `:sponge` acababa compilándose de verdad pese al
+  `//include` comentado: `./gradlew test` llevaba tiempo sin poder correr
+  entero en ningún sitio por esto. El proyecto Sponge API 7 pasa a
+  declararse con nombre plano y `projectDir` explícito
+  (`include 'sponge-api7'` + `project(':sponge-api7').projectDir =
+  file('sponge/api7')`), sin mover ningún fichero de sitio — **el path de
+  tarea Gradle cambia de `:sponge:api7:...` a `:sponge-api7:...`** (ver
+  README/SPEC/wiki actualizados).
+- `sponge/` (el módulo clásico deshabilitado) recibe también la firma
+  `boolean dispatchCommand(String)` correcta, por si algún día se
+  reactiva — hoy no compilaba con la interfaz `CSPlugin` actual.
+
+### Añadido
+- **`scripts/test-vote-e2e-real.sh` + `scripts/e2e-bot/`**: prueba end-to-end
+  real de `/voto40` con un bot de protocolo (mineflayer/Node) que se conecta
+  como jugador de verdad a Paper y Folia — no RCON, no consola, no mock HTTP
+  directo. Automatiza lo que antes era el escenario "manual" de
+  `scripts/test-vote-scenarios.sh` (nunca lo ejecutaba nadie ni ningún CI) y
+  cierra el hueco exacto que dejó pasar los tres bugs críticos de arriba:
+  verifica el mensaje real en el chat del jugador Y el body real del ack que
+  el plugin manda (`entregado:true`/`false`), en Paper y en Folia, para los
+  tres casos (voto con éxito, ya canjeado, nunca ha votado).
+- **`.claude/skills/`**: `minecraft-plugin-dev` y `minecraft-testing`
+  (MIT, de [Jahrome907/minecraft-agent-skills](https://github.com/Jahrome907/minecraft-agent-skills)),
+  actuales para Paper 26.x/Java 25. Su guía de schedulers de Folia confirma
+  byte a byte la firma real usada en los fixes de arriba. Ver
+  `.claude/skills/NOTICE.md` para el porqué de la elección.
+- Tests de regresión para cada bug de arriba: `TestPendingAckStore`
+  (concurrencia + purga por TTL), `TestVoteCMD` (formato de
+  `siguiente_voto`, fallback si no parsea), `TestServerStats`
+  (`recompensado` como string real del servidor, no como número —
+  cobertura que faltaba pese a que Gson ya lo toleraba).
+- Mock API (`scripts/mock-api/mock_api.py`): el ack ya no devuelve
+  `entregado: true` fijo sin mirar el body — ecoa lo que mandó el cliente,
+  igual que el servidor real. La versión anterior podía esconder localmente
+  el síntoma del bug de `dispatchCommand`.
+
 ## [3.1.1] - 2026-09-06
 
 ### Corregido (bugs detectados contra endpoint real)
